@@ -41,7 +41,7 @@
         <dip name="Credit Minimum" bits="17" ids="1,2"/>
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, color PROM 0x14100 -->
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
     <rom index="0" md5="none" zip="magworm.zip|centiped.zip">
         <part repeat="0x2000">00</part>
         <part crc="a88e970a" name="11005-0.k0"/>

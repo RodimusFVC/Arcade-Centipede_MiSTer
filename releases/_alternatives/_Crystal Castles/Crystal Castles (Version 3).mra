@@ -1,0 +1,66 @@
+<misterromdescription>
+    <name>Crystal Castles (Version 3)</name>
+    <region>World</region>
+    <homebrew>no</homebrew>
+    <bootleg>no</bootleg>
+    <version></version>
+    <alternative></alternative>
+    <platform></platform>
+    <series>Crystal Castles</series>
+    <year>1983</year>
+    <manufacturer>Atari</manufacturer>
+    <category>Shooter</category>
+
+    <setname>ccastles3</setname>
+    <parent>ccastles</parent>
+    <mameversion>0289</mameversion>
+    <rbf>Centipede</rbf>
+    <about></about>
+
+    <resolution>15kHz</resolution>
+    <rotation>horizontal</rotation>
+    <flip>yes</flip>
+
+    <players>2 (alternating)</players>
+    <joystick>8-way</joystick>
+    <special_controls>trackball</special_controls>
+    <num_buttons>2</num_buttons>
+    <buttons names="Left Jump/1P Start Upright,Right Jump/2P Start Upright,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+
+    <switches default="0F,00,00">
+        <dip name="Service Mode" bits="0" ids="Off,On" values="1,0"/>
+        <dip name="Unknown" bits="1" ids="Off,On" values="1,0"/>
+        <dip name="Unknown" bits="2" ids="Off,On" values="1,0"/>
+        <dip name="Unknown" bits="3" ids="Off,On" values="1,0"/>
+        <dip name="Cabinet" bits="4" ids="Upright,Cocktail"/>
+    </switches>
+
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
+    <rom index="0" md5="none" zip="ccastles3.zip|ccastles.zip">
+        <part repeat="0x2000">00</part>
+        <part crc="f6ccfbd4" name="136022-102.1h"/>
+        <part crc="e2e17236" name="136022-101.1f"/>
+        <part repeat="0x4000">00</part>
+        <part crc="10e39fce" name="136022-303.1k"/>
+        <part crc="74510f72" name="136022-304.1l"/>
+        <part crc="9418cf8a" name="136022-305.1n"/>
+        <part crc="9d1d89fc" name="136022-106.8d"/>
+        <part crc="39960b7d" name="136022-107.8b"/>
+        <part crc="6ed31e3b" name="82s129-136022-108.7k"/>
+        <part crc="068bdc7e" name="82s129-136022-110.11l"/>
+        <part crc="c29c18d9" name="82s129-136022-111.10k"/>
+    </rom>
+
+    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <rom index="1">
+        <part>
+            0A 09 00 00 DF 1F 00 00 00 00 00 00 00 00 00 00
+            12 11 16 15 80 00 05 06 81 82 83 13 14 84 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+        </part>
+    </rom>
+
+    <remark>Crystal Castles (Version 3) (Atari)</remark>
+    <mratimestamp>20261012000000</mratimestamp>
+</misterromdescription>

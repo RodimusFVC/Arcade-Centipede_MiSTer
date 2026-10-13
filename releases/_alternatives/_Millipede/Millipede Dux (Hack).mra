@@ -46,7 +46,7 @@
         <dip name="Bonus Coins" bits="21,23" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins,Demo Mode" values="0,1,2,3,4,5,6"/>
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, color PROM 0x14100 -->
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
     <rom index="0" md5="none" zip="millipdd.zip|milliped.zip">
         <part repeat="0x4000">00</part>
         <part crc="40711675" name="136013-104.1mn"/>

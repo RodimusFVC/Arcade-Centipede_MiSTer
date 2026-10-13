@@ -38,7 +38,9 @@ SUPPORTED = {
     ("warlords", "empty_init"): 7,
     ("mazeinv", "empty_init"): 8,
     ("bullsdrt", "init_bullsdrt"): 9,
+    ("ccastles", "empty_init"): 10,
 }
+VARIANT_BY_INPUTS = {"ccastlesj": 11}               # Crystal Castles (joystick version): stick on LETA 0
 
 IGNORED_REGIONS = {"plds"}
 UNUSED_PROMS = {"ba40e1a9", "a5101624",            # millpac / magworma PROMs, "not used" in MAME
@@ -48,6 +50,10 @@ F_TB, F_PADDLE, F_STICK, F_NOJOY, F_VERT, F_ROT90 = 0x01, 0x02, 0x04, 0x08, 0x10
 
 # port order on the board: index 1 idle bytes 4-9, input map bytes 16-63
 PORTS = [("IN0",), ("IN1",), ("IN2",), ("IN3",), ("DSW1",), ("DSW2",)]
+PORTS_BY_MACHINE = {"ccastles": [("IN0",), ("IN1",), ("LETA0",), ("LETA1",), ("LETA2",), ("LETA3",)]}
+# Crystal Castles PROM regions (ccastles_board.sv); "addressprom" is not used by MAME
+PROM_REGIONS = {"syncprom": SYNC_BASE, "wpprom": COLOR_BASE, "priprom": COLOR_BASE + 0x100}
+BANK_HIGH = {"ccastles": 0x2000}                    # maincpu 10000-13FFF (banked A000-DFFF) -> CPU ROM 2000
 
 # control ids (Arcade-Centipede.sv)
 CTL = {("JOYSTICK_UP", 1): 1, ("JOYSTICK_DOWN", 1): 2, ("JOYSTICK_LEFT", 1): 3, ("JOYSTICK_RIGHT", 1): 4,
@@ -172,6 +178,7 @@ def parse_inputs(src):
             elif mac in ("PORT_BIT", "PORT_DIPNAME", "PORT_CONFNAME", "PORT_SERVICE", "PORT_SERVICE_NO_TOGGLE",
                          "PORT_DIPUNUSED", "PORT_DIPUNUSED_DIPLOC", "PORT_DIPUNKNOWN", "PORT_DIPUNKNOWN_DIPLOC"):
                 mask = int(args[0], 0)
+                removed = [f for f in ports[cur] if f["mask"] & mask]
                 ports[cur] = [f for f in ports[cur] if not (f["mask"] & mask)]
                 if mac == "PORT_BIT":
                     low = args[1] == "IP_ACTIVE_LOW"
@@ -203,9 +210,13 @@ def parse_inputs(src):
                 fld["reverse"] = True
             elif mac == "PORT_NAME":
                 fld["name"] = args[0].strip('"')
-            elif mac in ("PORT_DIPLOCATION", "PORT_CODE", "PORT_8WAY", "PORT_4WAY", "PORT_CONDITION", "PORT_MINMAX",
+            elif mac == "PORT_CONDITION":
+                # a conditional bit (Crystal Castles: jump / start by cabinet): both stay, input_config picks
+                fld["cond"] = (args[0].strip('"'), int(args[1], 0), args[2], int(args[3], 0))
+                ports[cur] += [f for f in removed if "cond" in f]
+            elif mac in ("PORT_DIPLOCATION", "PORT_CODE", "PORT_8WAY", "PORT_4WAY", "PORT_MINMAX",
                          "PORT_SENSITIVITY", "PORT_KEYDELTA", "PORT_CUSTOM_MEMBER", "PORT_READ_LINE_DEVICE_MEMBER",
-                         "PORT_CENTERDELTA", "PORT_IMPULSE", "PORT_TOGGLE"):
+                         "PORT_CENTERDELTA", "PORT_IMPULSE", "PORT_TOGGLE", "PORT_READ_LINE_MEMBER"):
                 pass
             else:
                 raise SystemExit(f"INPUT_PORTS({name}): unhandled {mac}")
@@ -218,7 +229,7 @@ def parse_inputs(src):
 def place(segs, g):
     """-> list of segments with ioctl index 0 addresses; adds the sync PROM when the set has none"""
     out, have_sync = [], False
-    gfx = [s for s in segs if s["region"] == "gfx1"]
+    gfx = [s for s in segs if s["region"] in ("gfx1", "gfx")]
     half = (gfx[0]["rsize"] // 2) if gfx else 0
     for s in segs:
         r = s["region"]
@@ -227,8 +238,16 @@ def place(segs, g):
         if r in ("maincpu", "user1"):
             if r == "maincpu" and g["machine"] == "multiped":
                 continue
-            out.append(dict(s, addr=CPU_BASE + s["dst"]))
-        elif r == "gfx1":
+            if s["dst"] >= 0x10000:
+                out.append(dict(s, addr=CPU_BASE + s["dst"] - 0x10000 + BANK_HIGH[g["machine"]]))
+            else:
+                out.append(dict(s, addr=CPU_BASE + s["dst"]))
+        elif r in PROM_REGIONS:
+            out.append(dict(s, addr=PROM_REGIONS[r] + s["dst"]))
+            have_sync |= r == "syncprom"
+        elif r == "addressprom":
+            continue
+        elif r in ("gfx1", "gfx"):
             if s["dst"] < half < s["dst"] + s["len"]:        # one file holds both planes (Warlords): split it
                 n = half - s["dst"]
                 out.append(dict(s, len=n, addr=GFX_LO + s["dst"], partial=True))
@@ -266,7 +285,16 @@ def input_config(g, ports):
     """-> (idle bytes, dip list, dip defaults (3 bytes), input map, P1 button names)"""
     idle, dips, imap, buttons = [], [], [0] * 48, {}
     dbit, ddef = 0, 0
-    for p, names in enumerate(PORTS):
+    defaults = {tag: sum(f["default"] & f["mask"] for f in fl if "cond" not in f) for tag, fl in ports.items()}
+
+    def cond_ok(f):
+        if "cond" not in f:
+            return True
+        tag, mask, op, val = f["cond"]
+        v = defaults.get(tag, 0) & mask
+        return v == val if op == "EQUALS" else v != val
+
+    for p, names in enumerate(PORTS_BY_MACHINE.get(g["machine"], PORTS)):
         tag = next((n for n in names if n in ports), names[0])
         fields = ports.get(tag)
         if fields is None:
@@ -274,6 +302,8 @@ def input_config(g, ports):
             continue
         level = 0xFF
         for f in fields:
+            if not cond_ok(f):
+                continue
             level = (level & ~f["mask"]) | (f["default"] & f["mask"])
             if f["kind"] == "dip":
                 lo = (f["mask"] & -f["mask"]).bit_length() - 1
@@ -292,7 +322,7 @@ def input_config(g, ports):
                 dbit += w
             elif f["kind"] == "input":
                 t, pl = f["type"], f["player"]
-                if t in ("CUSTOM", "SPECIAL"):
+                if t in ("CUSTOM", "SPECIAL") or t in TRACKBALL_TYPES:
                     continue                           # board-supplied (VBLANK, trackball) or fixed
                 key = (t, pl if t.startswith(("JOYSTICK", "BUTTON")) else 0)
                 if key not in CTL:
@@ -309,8 +339,7 @@ def input_config(g, ports):
 
 
 def uses_trackball(ports):
-    return any(f["kind"] == "input" and f["type"] in TRACKBALL_TYPES
-               for t in ("TRACK0_X", "TRACK0_Y") for f in ports.get(t, []))
+    return any(f["kind"] == "input" and f["type"] in TRACKBALL_TYPES for fl in ports.values() for f in fl)
 
 
 def config_bytes(g, ports):
@@ -319,7 +348,8 @@ def config_bytes(g, ports):
             (F_STICK if "STICK0" in ports else 0) | (F_VERT if g["rot"] in ("ROT90", "ROT270") else 0) | \
             (0 if any(i in (1, 2, 3, 4, 9, 10, 11, 12) for i in imap) else F_NOJOY) | \
             (F_ROT90 if g["rot"] == "ROT90" else 0)
-    cfg = [SUPPORTED[(g["machine"], g["init"])], flags, 0, 0] + idle + [0] * 6 + imap
+    variant = VARIANT_BY_INPUTS.get(g["inputs"], SUPPORTED[(g["machine"], g["init"])])
+    cfg = [variant, flags, 0, 0] + idle + [0] * 6 + imap
     return cfg, idle, dips, ddef, imap, buttons, flags
 
 
@@ -388,7 +418,7 @@ def mra(g, games, segs, build_inputs):
 {dip_lines}
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, color PROM 0x14100 -->
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
     <rom index="0" md5="none" zip="{zipname}">
 {part_lines(segs)}
     </rom>

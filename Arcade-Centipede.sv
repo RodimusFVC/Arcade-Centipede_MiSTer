@@ -107,6 +107,7 @@ always @(posedge CLK_48M) begin
     end
 end
 
+wire v_cc      = game_var == 8'd10 || game_var == 8'd11;   // Crystal Castles board
 wire tb_game   = game_flags[0];
 wire pad_game  = game_flags[1];
 wire stk_game  = game_flags[2];
@@ -212,12 +213,47 @@ pll_cfg pll_cfg
 	.mgmt_waitrequest(cfg_waitrequest),
 	.mgmt_read(0),
 	.mgmt_readdata(),
-	.mgmt_write(0),
-	.mgmt_address(0),
-	.mgmt_writedata(0),
+	.mgmt_write(cfg_write),
+	.mgmt_address(cfg_address),
+	.mgmt_writedata(cfg_data),
 	.reconfig_to_pll(reconfig_to_pll),
 	.reconfig_from_pll(reconfig_from_pll)
 );
+
+// Crystal Castles runs at 50 MHz (10 MHz x 5), the Centipede boards at 48.384 MHz (12.096 MHz x 4). The PLL's M
+// counter (register 4) and fractional K (register 7) are rewritten, C stays 9: M 9 / K 1 = 50 MHz exactly, M 8 /
+// K 3045647209 = 48.384 MHz. K must stay inside 0.05-0.95 or be ~0 (Main_MiSTer findPLLpar / getPLLdiv encoding;
+// K FFFFFFFF broke the picture, HW 2026-10-13). Written after the ROM download, so the download never runs through
+// a relock (JunoFirst / Tutankham sequence).
+reg         cfg_write = 1'b0;
+reg   [5:0] cfg_address = 6'd0;
+reg  [31:0] cfg_data = 32'd0;
+always @(posedge CLK_50M) begin
+	reg [1:0] want_s = 2'b00, dl_s = 2'b00;
+	reg       want_cc = 1'b0, have_cc = 1'b0;
+	reg [2:0] state = 3'd0;
+
+	want_s <= {want_s[0], v_cc};
+	dl_s   <= {dl_s[0], ioctl_download};
+	want_cc <= want_s[1];
+
+	cfg_write <= 1'b0;
+	if (!dl_s[1] && state == 3'd0 && want_cc != have_cc) begin
+		state   <= 3'd1;
+		have_cc <= want_cc;
+	end
+
+	if (!cfg_waitrequest) begin
+		if (state) state <= state + 3'd1;
+		case (state)
+			1: begin cfg_address <= 6'd0; cfg_data <= 32'd0; cfg_write <= 1'b1; end
+			3: begin cfg_address <= 6'd4; cfg_data <= have_cc ? 32'h00020504 : 32'h00000404; cfg_write <= 1'b1; end
+			5: begin cfg_address <= 6'd7; cfg_data <= have_cc ? 32'd1 : 32'd3045647209; cfg_write <= 1'b1; end
+			7: begin cfg_address <= 6'd2; cfg_data <= 32'd0; cfg_write <= 1'b1; end
+			default: ;
+		endcase
+	end
+end
 
 // Hold the board in reset until the PLL is locked and the ROM download has finished
 wire reset = RESET | status[0] | buttons[1] | ioctl_download | ~locked;
@@ -278,24 +314,31 @@ wire [3:0] dir2 = stick_tb ? 4'd0 : dir2_raw;
 wire m_pause = joystick_0[11] | kb_pause;
 
 // Trackball: fine counters from mouse, SNAC quadrature edges, and (Trackball mode) left stick / d-pad once a frame.
-// Speed: the board sees the counter >> 1 (Normal, MAME's 50%), >> 0 (Fast) or >> 2 (Slow).
-// MAME: player 1 X is reversed; player 2 (cocktail) Y is reversed.
-reg  [9:0] tb1x = 10'd0, tb1y = 10'd0, tb2x = 10'd0, tb2y = 10'd0;
+// The board sees the counter >> base (Centipede boards 1 = MAME's 50 %, Crystal Castles 3 = MAME's 10 %), one less
+// for Fast, one more for Slow. SNAC and the stick add 2^(base-1) per count, so their rate is the same on every board
+// (SNAC = the Crystal Castles core's LETA rate). MAME: player 1 X is reversed; player 2 (cocktail) Y is reversed.
+wire [1:0] tb_base = v_cc ? 2'd3 : 2'd1;
+wire [3:0] tb_unit = v_cc ? 4'd4 : 4'd1;
+reg [11:0] tb1x = 12'd0, tb1y = 12'd0, tb2x = 12'd0, tb2y = 12'd0;
 reg        mouse_tog = 1'b0, tb_vbl = 1'b0;
 reg  [2:0] qa_h = 3'd0, qb_h = 3'd0, qa_v = 3'd0, qb_v = 3'd0;
 
-function automatic [9:0] stick_d(input [7:0] a, input pos, input neg);
-	stick_d = ($signed(a) > 8'sd12 || $signed(a) < -8'sd12) ? {{5{a[7]}}, a[7:3]} : pos ? 10'd6 : neg ? -10'd6 : 10'd0;
+function automatic [11:0] stick_d(input [7:0] a, input pos, input neg, input [3:0] u);
+	reg [11:0] d;
+	begin
+		d = ($signed(a) > 8'sd12 || $signed(a) < -8'sd12) ? {{7{a[7]}}, a[7:3]} : pos ? 12'd6 : neg ? -12'd6 : 12'd0;
+		stick_d = d * {8'd0, u};
+	end
 endfunction
 
-wire [9:0] mouse_dx = {{2{ps2_mouse[4]}}, ps2_mouse[15:8]};
-wire [9:0] mouse_dy = {{2{ps2_mouse[5]}}, ps2_mouse[23:16]};     // PS/2 Y is positive upward
-wire [9:0] s1x = stick_d(joystick_l_analog_0[7:0],  dir1_raw[0], dir1_raw[1]);
-wire [9:0] s1y = stick_d(joystick_l_analog_0[15:8], dir1_raw[2], dir1_raw[3]);
-wire [9:0] s2x = stick_d(joystick_l_analog_1[7:0],  dir2_raw[0], dir2_raw[1]);
-wire [9:0] s2y = stick_d(joystick_l_analog_1[15:8], dir2_raw[2], dir2_raw[3]);
+wire [11:0] mouse_dx = {{4{ps2_mouse[4]}}, ps2_mouse[15:8]};
+wire [11:0] mouse_dy = {{4{ps2_mouse[5]}}, ps2_mouse[23:16]};     // PS/2 Y is positive upward
+wire [11:0] s1x = stick_d(joystick_l_analog_0[7:0],  dir1_raw[0], dir1_raw[1], tb_unit);
+wire [11:0] s1y = stick_d(joystick_l_analog_0[15:8], dir1_raw[2], dir1_raw[3], tb_unit);
+wire [11:0] s2x = stick_d(joystick_l_analog_1[7:0],  dir2_raw[0], dir2_raw[1], tb_unit);
+wire [11:0] s2y = stick_d(joystick_l_analog_1[15:8], dir2_raw[2], dir2_raw[3], tb_unit);
 
-// SNAC quadrature (both edges of A and B, as the Crystal Castles core's LETA decoder)
+// SNAC quadrature (both edges of A and B, the Crystal Castles core's LETA decoder and direction)
 wire q_h_ce  = qa_h[1] ^ qa_h[2] ^ qb_h[1] ^ qb_h[2];
 wire q_h_dir = qa_h[1] ^ qb_h[2];
 wire q_v_ce  = qa_v[1] ^ qa_v[2] ^ qb_v[1] ^ qb_v[2];
@@ -311,8 +354,8 @@ always @(posedge CLK_48M) begin
 		tb1y <= tb1y - mouse_dy;
 	end
 	else if (snac_en && (q_h_ce || q_v_ce)) begin
-		if (q_h_ce) tb1x <= q_h_dir ? tb1x + 10'd1 : tb1x - 10'd1;
-		if (q_v_ce) tb1y <= q_v_dir ? tb1y + 10'd1 : tb1y - 10'd1;
+		if (q_h_ce) tb1x <= q_h_dir ? tb1x - {8'd0, tb_unit} : tb1x + {8'd0, tb_unit};
+		if (q_v_ce) tb1y <= q_v_dir ? tb1y - {8'd0, tb_unit} : tb1y + {8'd0, tb_unit};
 	end
 	else if (stick_tb && vblank && !tb_vbl) begin
 		tb1x <= tb1x - s1x;
@@ -322,11 +365,15 @@ always @(posedge CLK_48M) begin
 	end
 end
 
-function automatic [7:0] tb_scale(input [9:0] c, input [1:0] spd);
-	tb_scale = (spd == 2'd1) ? c[7:0] : (spd == 2'd2) ? c[9:2] : c[8:1];
+function automatic [7:0] tb_scale(input [11:0] c, input [1:0] spd, input [1:0] base);
+	reg [2:0] sh;
+	begin
+		sh = {1'b0, base} + (spd == 2'd2 ? 3'd1 : 3'd0) - (spd == 2'd1 ? 3'd1 : 3'd0);
+		tb_scale = 8'(c >> sh);
+	end
 endfunction
-wire [7:0] tb1x_o = tb_scale(tb1x, status[29:28]), tb1y_o = tb_scale(tb1y, status[29:28]);
-wire [7:0] tb2x_o = tb_scale(tb2x, status[29:28]), tb2y_o = tb_scale(tb2y, status[29:28]);
+wire [7:0] tb1x_o = tb_scale(tb1x, status[29:28], tb_base), tb1y_o = tb_scale(tb1y, status[29:28], tb_base);
+wire [7:0] tb2x_o = tb_scale(tb2x, status[29:28], tb_base), tb2y_o = tb_scale(tb2y, status[29:28], tb_base);
 
 // direction latched on every count (Atari trackball DIR flip-flop / MAME read_trackball sign)
 reg  [7:0] tb1x_d = 0, tb1y_d = 0, tb2x_d = 0, tb2y_d = 0;
@@ -430,6 +477,12 @@ pause #(8,8,8,48) pause
 
 wire hs, vs;
 wire ce_pix;
+wire        c_ce, c_hs, c_vs, c_hbl, c_vbl, k_ce, k_hs, k_vs, k_hbl, k_vbl;
+wire  [7:0] c_r, c_g, c_b, k_r, k_g, k_b;
+wire signed [15:0] c_audio, k_audio;
+assign {ce_pix, hs, vs, hblank, vblank} = v_cc ? {k_ce, k_hs, k_vs, k_hbl, k_vbl} : {c_ce, c_hs, c_vs, c_hbl, c_vbl};
+assign {r, g, b} = v_cc ? {k_r, k_g, k_b} : {c_r, c_g, c_b};
+assign audio = v_cc ? k_audio : c_audio;
 
 wire rotate_ccw = ~game_flags[7];  // ROT270 sets rotate CCW, ROT90 sets CW
 wire no_rotate  = ~game_vert | status[8] | direct_video;
@@ -456,7 +509,7 @@ arcade_video #(256,24) arcade_video
 centiped_board board
 (
 	.clk(CLK_48M),
-	.reset(reset),
+	.reset(reset | v_cc),
 	.pause(pause_cpu),
 	.variant(game_var),
 
@@ -479,21 +532,54 @@ centiped_board board
 	.h_adj(status[37:34]),
 	.v_adj(status[41:38]),
 
-	.ce_pix(ce_pix),
-	.video_r(r),
-	.video_g(g),
-	.video_b(b),
-	.video_hs(hs),
-	.video_vs(vs),
-	.video_hblank(hblank),
-	.video_vblank(vblank),
+	.ce_pix(c_ce),
+	.video_r(c_r),
+	.video_g(c_g),
+	.video_b(c_b),
+	.video_hs(c_hs),
+	.video_vs(c_vs),
+	.video_hblank(c_hbl),
+	.video_vblank(c_vbl),
 
-	.audio(audio),
+	.audio(c_audio),
 
 	.earom_hs_addr(6'd0),
 	.earom_hs_din(8'd0),
 	.earom_hs_dout(),
 	.earom_hs_we(1'b0)
+);
+
+ccastles_board ccastles
+(
+	.clk(CLK_48M),
+	.reset(reset | ~v_cc),
+	.pause(pause_cpu),
+	.joy_ver(game_var == 8'd11),
+
+	.in0(in_port[0]),
+	.in1(in_port[1]),
+	.in2(in_port[2]),
+	.tb1_x(tb1x_o), .tb1_y(tb1y_o),
+	.tb2_x(tb2x_o), .tb2_y(tb2y_o),
+
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_wr0(ioctl_wr & (ioctl_index == 8'd0)),
+
+	.crt_flip(status[10]),
+	.h_adj(status[37:34]),
+	.v_adj(status[41:38]),
+
+	.ce_pix(k_ce),
+	.video_r(k_r),
+	.video_g(k_g),
+	.video_b(k_b),
+	.video_hs(k_hs),
+	.video_vs(k_vs),
+	.video_hblank(k_hbl),
+	.video_vblank(k_vbl),
+
+	.audio(k_audio)
 );
 
 endmodule

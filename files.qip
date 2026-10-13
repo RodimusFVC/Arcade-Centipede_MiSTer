@@ -2,6 +2,7 @@ set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
 
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-Centipede.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/centiped_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ccastles_board.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/eeprom_93c46.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/paddle_ctl.sv
 
