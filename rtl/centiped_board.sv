@@ -73,10 +73,18 @@ module centiped_board
 
     output signed [15:0] audio,
 
-    input         [5:0] earom_hs_addr,  // EAROM second port (high score save)
-    input         [7:0] earom_hs_din,
-    output        [7:0] earom_hs_dout,
-    input               earom_hs_we
+    // save chip (EAROM 64 bytes / Multipede 93C46 128 bytes) for the NVRAM file, while the CPU is held or paused
+    input               nv_sel,
+    input         [7:0] nv_addr,
+    input         [7:0] nv_din,
+    input               nv_we,
+    output        [7:0] nv_dout,
+
+    // work RAM second port for hiscore.dat restore / save (Magic Worm, Warlords)
+    input         [9:0] hs_addr,
+    input         [7:0] hs_din,
+    input               hs_we,
+    output        [7:0] hs_dout
 );
 
 // ---------------------------------------------------------------- variant
@@ -325,7 +333,7 @@ dpram_dc #(.widthad_a(10)) work_ram
 (
     .clock_a(clk), .address_a(reset ? clr_addr : bus_a[9:0]), .data_a(reset ? 8'd0 : bus_dout),
     .wren_a(reset | (bus_we & sel_ram)), .q_a(ram_q),
-    .clock_b(clk), .address_b(10'd0), .q_b()
+    .clock_b(clk), .address_b(hs_addr), .data_b(hs_din), .wren_b(hs_we), .q_b(hs_dout)
 );
 
 // ---------------------------------------------------------------- playfield RAM
@@ -399,11 +407,14 @@ always @(posedge clk) begin
     else if (bus_we & wr_eactl) ea_ctrl <= {bus_dout[3:2], ~bus_dout[1], bus_dout[0]};
     if (bus_we & wr_eaadr) begin ea_addr <= bus_a[5:0]; ea_in <= bus_dout; end
 end
+wire [7:0] ea_nv_q, eep_nv_q;
+assign nv_dout = v_multi ? eep_nv_q : ea_nv_q;
 dpram_dc #(.widthad_a(6)) earom
 (
     .clock_a(clk), .address_a(ea_addr), .data_a(ea_ctrl[2] ? 8'h00 : ea_in),
     .wren_a(ce_pix & ea_ctrl[3] & ~ea_ctrl[1]), .q_a(ea_q),
-    .clock_b(clk), .address_b(earom_hs_addr), .data_b(earom_hs_din), .wren_b(earom_hs_we), .q_b(earom_hs_dout)
+    .clock_b(clk), .address_b(nv_addr[5:0]), .data_b(nv_din), .wren_b(nv_we & nv_addr[7:6] == 2'b00 & ~v_multi),
+    .q_b(ea_nv_q)
 );
 
 // ---------------------------------------------------------------- Multipede 93C46
@@ -422,7 +433,9 @@ end
 eeprom_93c46 eeprom
 (
     .clk(clk), .reset(reset), .clear(1'b0),
-    .wr(eep_wr), .di(eep_di), .sk(eep_sk), .cs(eep_cs), .dout(eep_do)
+    .wr(eep_wr), .di(eep_di), .sk(eep_sk), .cs(eep_cs), .dout(eep_do),
+    .ext_sel(nv_sel & v_multi), .ext_addr(nv_addr[6:0]), .ext_din(nv_din), .ext_we(nv_we & ~nv_addr[7] & v_multi),
+    .ext_q(eep_nv_q)
 );
 
 // ---------------------------------------------------------------- inputs
@@ -469,16 +482,22 @@ always @(posedge clk) lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr
 wire [3:0] p1c0, p1c1, p1c2, p1c3, p2c0, p2c1, p2c2, p2c3;
 wire [7:0] pokey1_q, pokey2_q;
 
+// Warlords paddles on POT0-3 as the real pot scan (MAME pokey_potgo / step_pot): after POTGO the counter runs at
+// clock / 114 (fast mode: every clock) to 228; a pot latches once the counter passes its value, ALLPOT reads 1 while
+// it is still counting and POTn reads the running counter until then
+wire [7:0] pot_count1;
+wire [7:0] pot_cmp = v_war ? {4'h0, pot_count1 > an3, pot_count1 > an2, pot_count1 > an1, pot_count1 > an0} : 8'h00;
+
 pokey pokey1
 (
     .clk(clk), .ce(cpu_ce), .enable_179(1'b1), .addr(bus_a[3:0]), .data_in(bus_dout),
     .wr_en(~cpu_rw_n & sel_pokey1), .reset_n(cpu_reset_n),
     .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
-    .pot_in(8'h00), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
+    .pot_in(pot_cmp), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
     .data_out(pokey1_q),
     .channel_0_out(p1c0), .channel_1_out(p1c1), .channel_2_out(p1c2), .channel_3_out(p1c3),
     .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset()
+    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count(pot_count1)
 );
 
 pokey pokey2
@@ -490,25 +509,11 @@ pokey pokey2
     .data_out(pokey2_q),
     .channel_0_out(p2c0), .channel_1_out(p2c1), .channel_2_out(p2c2), .channel_3_out(p2c3),
     .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset()
+    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
 );
 
-// Millipede board: DIP switches are POKEY ALLPOT (MAME allpot_r). Warlords: paddles are POT0-3 (MAME pot_r),
-// read back as values; ALLPOT reads 0 (every pot done).
-reg  [7:0] pokey1_rd;
-always @* begin
-    pokey1_rd = pokey1_q;
-    if (map_m && bus_a[3:0] == 4'h8) pokey1_rd = dsw1;
-    if (v_war)
-        case (bus_a[3:0])
-            4'h0: pokey1_rd = an0;
-            4'h1: pokey1_rd = an1;
-            4'h2: pokey1_rd = an2;
-            4'h3: pokey1_rd = an3;
-            4'h8: pokey1_rd = 8'h00;
-            default: ;
-        endcase
-end
+// Millipede board: DIP switches are POKEY ALLPOT (MAME allpot_r)
+wire [7:0] pokey1_rd = (map_m && bus_a[3:0] == 4'h8) ? dsw1 : pokey1_q;
 wire [7:0] pokey2_rd = (map_m && bus_a[3:0] == 4'h8) ? dsw2 : pokey2_q;
 
 // AY-3-8910 / SN76496 at 12.096 MHz / 8
@@ -551,7 +556,7 @@ jt49_bus #(.COMP(3'b010)) ay
 wire signed [15:0] ay_audio;
 jt49_dcrm2 #(.sw(16)) ay_dcrm
 (
-    .clk(clk), .cen(ay_cen), .rst(~cpu_reset_n),
+    .clk(clk), .cen(dc_cen), .rst(~cpu_reset_n),
     .din({1'b0, ay_sound, 5'd0}), .dout(ay_audio)
 );
 
@@ -569,11 +574,42 @@ jt89 sn
     .ready()
 );
 
-wire [5:0] pk1 = {2'b00, p1c0} + {2'b00, p1c1} + {2'b00, p1c2} + {2'b00, p1c3};
-wire [5:0] pk2 = {2'b00, p2c0} + {2'b00, p2c1} + {2'b00, p2c2} + {2'b00, p2c3};
-wire signed [15:0] pokey_audio = map_m ? $signed({1'b0, {1'b0, pk1} + {1'b0, pk2}, 8'd0})   // silent POKEY = 0
-                                       : $signed({1'b0, pk1, 9'd0});
-assign audio = v_ay ? ay_audio : v_bull ? {sn_sound, 5'd0} : pokey_audio;
+// POKEY output: each channel's volume drives the chip's resistor DAC (90k / 26.5k / 8.05k / 3.4k, MAME vol_init);
+// the output follows the summed conductance, normalised here to 0-255 per channel
+function automatic [7:0] pk_dac(input [3:0] v);
+    case (v)
+        4'd0:  pk_dac = 8'd0;   4'd1:  pk_dac = 8'd6;   4'd2:  pk_dac = 8'd21;  4'd3:  pk_dac = 8'd27;
+        4'd4:  pk_dac = 8'd68;  4'd5:  pk_dac = 8'd74;  4'd6:  pk_dac = 8'd88;  4'd7:  pk_dac = 8'd94;
+        4'd8:  pk_dac = 8'd161; 4'd9:  pk_dac = 8'd167; 4'd10: pk_dac = 8'd181; 4'd11: pk_dac = 8'd187;
+        4'd12: pk_dac = 8'd228; 4'd13: pk_dac = 8'd234; 4'd14: pk_dac = 8'd249; default: pk_dac = 8'd255;
+    endcase
+endfunction
+wire [9:0] pk1 = pk_dac(p1c0) + pk_dac(p1c1) + pk_dac(p1c2) + pk_dac(p1c3);
+wire [9:0] pk2 = pk_dac(p2c0) + pk_dac(p2c1) + pk_dac(p2c2) + pk_dac(p2c3);
+wire [15:0] pk_raw = map_m ? {1'b0, {1'b0, pk1} + {1'b0, pk2}, 4'd0} : {1'b0, pk1, 5'd0};   // full scale 32640
+
+// output stage: DC removal (~7 Hz), then Centipede's op-amp low-pass (MAME set_output_opamp_low_pass 3.3k / 0.01 uF,
+// fc 4.8 kHz, 1-pole at 756 kHz; a = 1 - exp(-2 pi fc / fs) = 2575 / 65536)
+reg  [9:0] dc_div = 10'd0;
+always @(posedge clk) dc_div <= dc_div + 10'd1;
+wire dc_cen = dc_div == 10'd0;                      // 47.25 kHz
+wire signed [15:0] pk_ac;
+jt49_dcrm2 #(.sw(16)) pk_dcrm(.clk(clk), .cen(dc_cen), .rst(~cpu_reset_n), .din(pk_raw), .dout(pk_ac));
+
+reg  signed [15:0] pk_lp = 16'sd0;
+wire signed [31:0] pk_step = ($signed({pk_ac[15], pk_ac}) - $signed({pk_lp[15], pk_lp})) * 32'sd2575;
+always @(posedge clk) if (dc_div[5:0] == 6'd0) pk_lp <= pk_lp + 16'(pk_step >>> 16);
+wire signed [15:0] pokey_audio = (variant <= 8'd1) ? pk_lp : pk_ac;
+
+// levels (sim, coin + start, 2026-10-13): POKEY x2, AY x4 put every board at RMS ~1000-2200, peaks < 20000
+function automatic signed [15:0] sat_shl(input signed [15:0] x, input [1:0] k);
+    reg signed [18:0] y;
+    begin
+        y = 19'(x) <<< k;
+        sat_shl = (y > 19'sd32767) ? 16'sd32767 : (y < -19'sd32768) ? -16'sd32768 : y[15:0];
+    end
+endfunction
+assign audio = v_ay ? sat_shl(ay_audio, 2'd2) : v_bull ? {sn_sound, 5'd0} : sat_shl(pokey_audio, 2'd1);
 
 // ---------------------------------------------------------------- CPU data in
 

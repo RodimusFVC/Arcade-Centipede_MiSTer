@@ -59,12 +59,16 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            00 11 00 00 20 FF 00 FF 54 02 00 00 00 00 00 00
+            00 11 02 00 20 FF 00 FF 54 02 00 00 00 00 00 00
             00 00 00 00 80 81 00 00 13 14 05 0D 15 11 12 16
             00 00 00 00 00 00 00 00 0A 09 0C 0B 01 02 03 04
             82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91
         </part>
     </rom>
+
+    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="64"></nvram>
 
     <remark>Centipede Dux (Hack) (Two-Bit Score)</remark>
     <mratimestamp>20261012000000</mratimestamp>

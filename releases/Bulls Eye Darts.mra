@@ -64,12 +64,16 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            09 19 00 00 30 FF 70 FF FF FF 00 00 00 00 00 00
+            09 19 02 00 30 FF 70 FF FF FF 00 00 00 00 00 00
             00 00 00 00 00 00 00 00 13 14 05 00 00 11 12 17
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
             80 81 82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F
         </part>
     </rom>
+
+    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="64"></nvram>
 
     <remark>Bulls Eye Darts (Shinkai Inc. (Magic Electronics Inc. License))</remark>
     <mratimestamp>20261012000000</mratimestamp>

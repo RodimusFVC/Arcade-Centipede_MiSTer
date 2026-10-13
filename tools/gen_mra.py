@@ -46,6 +46,17 @@ IGNORED_REGIONS = {"plds"}
 UNUSED_PROMS = {"ba40e1a9", "a5101624",            # millpac / magworma PROMs, "not used" in MAME
                 "d841b7e0"}                         # bullsdrt 82s147, "unknown" in MAME
 
+# Saves (index 1 byte 2): the board's own save chip where the game uses it (EAROM accessed at boot in the sim:
+# every set but Magic Worm, 2026-10-13), else hiscore.dat RAM ranges through hiscore.v.
+CHIP_NVRAM = {0: 64, 1: 64, 2: 64, 3: 64, 5: 64, 8: 64, 9: 64,    # ER2055 EAROM
+              6: 128,                                             # Multipede 93C46
+              10: 256, 11: 256}                                   # Crystal Castles X2212 pair
+HISCORE_DAT = Path("/CybertronMD/Mame/plugins/hiscore/hiscore.dat")
+HISCORE_HEADER_TAIL = "00 FF 00 02 00 02 00 01 11 11 00 00"
+# START_WAIT = last boot-time write to the hiscore.dat ranges (MAME write taps, 30 s, 2026-10-13) + 2 frames
+HISCORE_INIT_FRAME = {"warlords": 2, "magworm": 0}
+CLK_PER_FRAME = 384 * 8 * 263                                     # Centipede board, 48.384 MHz
+
 F_TB, F_PADDLE, F_STICK, F_NOJOY, F_VERT, F_ROT90 = 0x01, 0x02, 0x04, 0x08, 0x10, 0x80
 
 # port order on the board: index 1 idle bytes 4-9, input map bytes 16-63
@@ -349,8 +360,65 @@ def config_bytes(g, ports):
             (0 if any(i in (1, 2, 3, 4, 9, 10, 11, 12) for i in imap) else F_NOJOY) | \
             (F_ROT90 if g["rot"] == "ROT90" else 0)
     variant = VARIANT_BY_INPUTS.get(g["inputs"], SUPPORTED[(g["machine"], g["init"])])
-    cfg = [variant, flags, 0, 0] + idle + [0] * 6 + imap
+    save = 2 if variant in CHIP_NVRAM else 1 if HISCORES.get(g["name"]) else 0
+    cfg = [variant, flags, save, 0] + idle + [0] * 6 + imap
     return cfg, idle, dips, ddef, imap, buttons, flags
+
+
+def parse_hiscores(path):
+    """hiscore.dat -> {set: [entry lines]}; sets listed together share the entry lines below them."""
+    out, names, body = {}, [], False
+    for line in path.read_text(encoding="latin-1").splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            names, body = ([], False) if not line else (names, body)
+            continue
+        if line.endswith(":"):
+            if body:
+                names, body = [], False
+            names.append(line[:-1])
+        elif line.startswith("@"):
+            for n in names:
+                out.setdefault(n, []).append(line)
+            body = True
+    return out
+
+
+HISCORES = parse_hiscores(HISCORE_DAT) if HISCORE_DAT.exists() else {}
+
+
+def save_xml(g, cfg):
+    if cfg[2] == 2:
+        return f"""
+    <!-- Index 4: the board's save chip ({CHIP_NVRAM[cfg[0]]} bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="{CHIP_NVRAM[cfg[0]]}"></nvram>
+"""
+    if cfg[2] != 1:
+        return ""
+    ents = []
+    for line in HISCORES[g["name"]]:
+        f = line.split(",")
+        if f[0] != "@:maincpu" or f[1] != "program":
+            raise SystemExit(f'{g["name"]}: unsupported hiscore.dat line {line}')
+        ents.append((int(f[2], 16), int(f[3], 16), int(f[4], 16), int(f[5], 16)))
+    rows = "\n".join(f"            {a >> 24 & 0xFF:02X} {a >> 16 & 0xFF:02X} {a >> 8 & 0xFF:02X} {a & 0xFF:02X} "
+                      f"{n >> 8:02X} {n & 0xFF:02X} {s:02X} {e:02X}" for a, n, s, e in ents)
+    if g["name"] not in HISCORE_INIT_FRAME:
+        raise SystemExit(f'{g["name"]}: no measured table-init frame for its hiscore layout')
+    wait = (HISCORE_INIT_FRAME[g["name"]] + 2) * CLK_PER_FRAME
+    header = " ".join(f"{b:02X}" for b in wait.to_bytes(4, "big")) + " " + HISCORE_HEADER_TAIL
+    return f"""
+    <!-- Index 3: hiscore config (MAME hiscore.dat), index 4: saved scores -->
+    <rom index="3" md5="none">
+        <part>
+            {header}
+{rows}
+        </part>
+    </rom>
+    <rom index="4"></rom>
+    <nvram index="4" size="{sum(n for _, n, _, _ in ents)}"></nvram>
+"""
 
 
 def mra(g, games, segs, build_inputs):
@@ -429,7 +497,7 @@ def mra(g, games, segs, build_inputs):
 {cfg_rows}
         </part>
     </rom>
-
+{save_xml(g, cfg)}
     <remark>{remark(g)}</remark>
     <mratimestamp>20261012000000</mratimestamp>
 </misterromdescription>

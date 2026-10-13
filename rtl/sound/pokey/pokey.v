@@ -11,7 +11,7 @@
 
 `timescale 1 ps / 1 ps
 /* verilator lint_off COMBDLY */
-module pokey(clk, ce, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enable, keyboard_scan, keyboard_response, pot_in, sio_in1, sio_in2, sio_in3, data_out, channel_0_out, channel_1_out, channel_2_out, channel_3_out, irq_n_out, sio_out1, sio_out2, sio_out3, sio_clockin_in, sio_clockin_out, sio_clockin_oe, sio_clockout, pot_reset);
+module pokey(clk, ce, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enable, keyboard_scan, keyboard_response, pot_in, sio_in1, sio_in2, sio_in3, data_out, channel_0_out, channel_1_out, channel_2_out, channel_3_out, irq_n_out, sio_out1, sio_out2, sio_out3, sio_clockin_in, sio_clockin_out, sio_clockin_oe, sio_clockout, pot_reset, pot_count);
    parameter    custom_keyboard_scan = 0;
    input        clk;
    input        ce;
@@ -52,6 +52,7 @@ module pokey(clk, ce, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_e
    output       sio_clockout;
    
    output       pot_reset;
+   output [7:0] pot_count;      // pot scan counter (Centipede core: paddle comparators drive pot_in from it)
    
    
    wire         enable_64;
@@ -1063,6 +1064,7 @@ module pokey(clk, ce, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_e
    assign sio_clockin_out = serin_clock_reg;
    
    assign pot_reset = pot_reset_reg;
+   assign pot_count = pot_counter_reg;
    
 endmodule
 

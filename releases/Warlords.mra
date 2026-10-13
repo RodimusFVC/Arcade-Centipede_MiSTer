@@ -61,12 +61,25 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            07 0A 00 00 20 FF FF FF 00 02 00 00 00 00 00 00
+            07 0A 01 00 20 FF FF FF 00 02 00 00 00 00 00 00
             00 00 00 00 80 81 00 82 05 0D 18 19 15 11 12 16
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
             83 84 85 00 86 87 00 00 88 89 8A 8B 8C 8D 8E 8F
         </part>
     </rom>
+
+    <!-- Index 3: hiscore config (MAME hiscore.dat), index 4: saved scores -->
+    <rom index="3" md5="none">
+        <part>
+            00 31 50 00 00 FF 00 02 00 02 00 01 11 11 00 00
+            00 00 00 F3 00 09 4D 61
+            00 00 01 26 00 02 75 75
+            00 00 01 2D 00 02 13 26
+            00 00 01 3A 00 02 00 00
+        </part>
+    </rom>
+    <rom index="4"></rom>
+    <nvram index="4" size="15"></nvram>
 
     <remark>Warlords (Atari)</remark>
     <mratimestamp>20261012000000</mratimestamp>

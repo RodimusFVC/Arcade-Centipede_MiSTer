@@ -85,6 +85,7 @@ assign BUTTONS = 0;
 
 // MRA index 1:
 //   byte 0      board variant (see rtl/centiped_board.sv)
+//   byte 2      saves: 0 none, 1 hiscore.dat (index 3 config), 2 the board's EAROM / 93C46 / X2212 (index 4 = chip image)
 //   byte 1      flags: [0] trackball game, [1] paddle game, [2] analog stick game, [3] no joystick inputs,
 //               [4] vertical, [7] vertical is ROT90
 //   bytes 4-9   idle level of every bit of IN0, IN1, IN2, IN3, DSW1, DSW2
@@ -92,6 +93,7 @@ assign BUTTONS = 0;
 //               1-63 = control id inverting the idle level, 0 = idle level
 reg [7:0] game_var   = 8'd0;
 reg [7:0] game_flags = 8'h11;
+reg [1:0] save_mode  = 2'd0;       // 0 none, 1 hiscore.dat RAM ranges (index 3), 2 board save chip (EAROM / EEPROM / X2212)
 reg [7:0] port_idle[6] = '{8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF};
 reg [7:0] in_map[48];
 
@@ -102,6 +104,7 @@ always @(posedge CLK_48M) begin
     if (ioctl_wr && ioctl_index == 8'd1) begin
         if (ioctl_addr == 25'd0) game_var   <= ioctl_dout;
         if (ioctl_addr == 25'd1) game_flags <= ioctl_dout;
+        if (ioctl_addr == 25'd2) save_mode  <= ioctl_dout[1:0];
         if (ioctl_addr >= 25'd4  && ioctl_addr < 25'd10) port_idle[idle_idx] <= ioctl_dout;
         if (ioctl_addr >= 25'd16 && ioctl_addr < 25'd64) in_map[map_idx] <= ioctl_dout;
     end
@@ -143,6 +146,9 @@ localparam CONF_STR = {
 	"P3,Pause Options;",
 	"P3O[17],Pause when OSD is open,On,Off;",
 	"P3O[18],Dim video after 10s,On,Off;",
+	"-;",
+	"P4,High Score Options;",
+	"P4O[24],Autosave Hiscores,Off,On;",
 	"-;",
 	"DIP;",
 	"-;",
@@ -461,6 +467,19 @@ wire [7:0] an1 = stk_game ? stk_p2y         : pad_pos[1];
 wire [7:0] an2 = stk_game ? stk_p1x         : pad_pos[2];
 wire [7:0] an3 = stk_game ? 8'hFF - stk_p2x : pad_pos[3];
 
+// save system nets (instances after the boards)
+wire        nv_dl = ioctl_download && ioctl_index == 8'd4;
+wire  [7:0] nv_address, c_nv_q, k_nv_q;
+wire  [7:0] nv_din_hps, hs_din_hps;
+wire        nv_upload_req, hs_upload_req, nv_pause, hs_pause;
+wire  [7:0] nv_port_addr = nv_dl ? ioctl_addr[7:0] : nv_address;
+wire        nv_port_we   = nv_dl && ioctl_wr && save_mode == 2'd2 && ioctl_addr[24:8] == 17'd0;
+wire        nv_sel       = nv_dl || nv_pause;
+wire [15:0] hs_address;
+wire  [7:0] hs_data_in;
+wire  [7:0] hs_data_out;
+wire        hs_write_enable;
+
 // PAUSE SYSTEM
 wire [23:0] rgb_out;
 wire  [7:0] r, g, b;
@@ -469,7 +488,7 @@ pause #(8,8,8,48) pause
 	.*,
 	.clk_sys(CLK_48M),
 	.user_button(m_pause),
-	.pause_request(1'b0),
+	.pause_request((save_mode == 2'd1 && hs_pause) || (save_mode == 2'd2 && nv_pause)),
 	.options(~status[18:17])
 );
 
@@ -543,10 +562,16 @@ centiped_board board
 
 	.audio(c_audio),
 
-	.earom_hs_addr(6'd0),
-	.earom_hs_din(8'd0),
-	.earom_hs_dout(),
-	.earom_hs_we(1'b0)
+	.nv_sel(nv_sel),
+	.nv_addr(nv_port_addr),
+	.nv_din(ioctl_dout),
+	.nv_we(nv_port_we),
+	.nv_dout(c_nv_q),
+
+	.hs_addr(hs_address[9:0]),
+	.hs_din(hs_data_in),
+	.hs_we(hs_write_enable & save_mode == 2'd1),
+	.hs_dout(hs_data_out)
 );
 
 ccastles_board ccastles
@@ -579,7 +604,71 @@ ccastles_board ccastles
 	.video_hblank(k_hbl),
 	.video_vblank(k_vbl),
 
-	.audio(k_audio)
+	.audio(k_audio),
+
+	.nv_sel(nv_sel),
+	.nv_addr(nv_port_addr),
+	.nv_din(ioctl_dout),
+	.nv_we(nv_port_we),
+	.nv_dout(k_nv_q)
 );
+
+// Saves. Chip boards: the NVRAM file is the save chip's contents, written into the chip while the MRA loads (the
+// board is in reset) and read back by nvram.v; the game restores its own scores as on the real board.
+// Magic Worm / Warlords: hiscore.dat ranges in work RAM through hiscore.v. Each is inert outside its mode.
+
+nvram #(
+	.DUMPWIDTH(8),
+	.DUMPINDEX(4),
+	.PAUSEPAD(2)
+) nv (
+	.clk(CLK_48M),
+	.paused(pause_cpu),
+	.reset(reset),
+	.autosave(status[24]),
+	.ioctl_upload(ioctl_upload),
+	.ioctl_upload_req(nv_upload_req),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_index(ioctl_index),
+	.ioctl_din(nv_din_hps),
+	.ioctl_dout(ioctl_dout),
+	.OSD_STATUS(OSD_STATUS),
+	.nvram_address(nv_address),
+	.nvram_data_out(v_cc ? k_nv_q : c_nv_q),
+	.pause_cpu(nv_pause)
+);
+
+hiscore #(
+	.HS_ADDRESSWIDTH(16),
+	.CFG_ADDRESSWIDTH(4),
+	.CFG_LENGTHWIDTH(2)
+) hi (
+	.clk(CLK_48M),
+	.paused(pause_cpu),
+	.reset(reset),
+	.autosave(status[24]),
+	.ioctl_upload(ioctl_upload),
+	.ioctl_upload_req(hs_upload_req),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_index(ioctl_index),
+	.OSD_STATUS(OSD_STATUS),
+	.data_from_hps(ioctl_dout),
+	.data_from_ram(hs_data_out),
+	.ram_address(hs_address),
+	.data_to_hps(hs_din_hps),
+	.data_to_ram(hs_data_in),
+	.ram_write(hs_write_enable),
+	.ram_intent_read(),
+	.ram_intent_write(),
+	.pause_cpu(hs_pause),
+	.configured()
+);
+
+assign ioctl_din        = (save_mode == 2'd1) ? hs_din_hps : nv_din_hps;
+assign ioctl_upload_req = (save_mode == 2'd1) ? hs_upload_req : (save_mode == 2'd2) ? nv_upload_req : 1'b0;
 
 endmodule

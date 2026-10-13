@@ -61,7 +61,14 @@ module ccastles_board
     output reg          video_hblank = 1'b1,
     output reg          video_vblank = 1'b1,
 
-    output signed [15:0] audio
+    output signed [15:0] audio,
+
+    // X2212 EEPROM shadow (256 bytes) for the NVRAM file, while the CPU is held or paused
+    input               nv_sel,
+    input         [7:0] nv_addr,
+    input         [7:0] nv_din,
+    input               nv_we,
+    output        [7:0] nv_dout
 );
 
 // ---------------------------------------------------------------- timebase
@@ -270,13 +277,36 @@ dpram_dc #(.widthad_a(12)) sram
     .clock_b(clk), .address_b(spr_addr), .q_b(spr_q)
 );
 
-// X2212 pair as plain RAM (store / recall not modelled yet)
-wire [7:0] nv_q;
-dpram_dc #(.widthad_a(8)) nvram
+// X2212 pair (4B low nibble, 4A high nibble): static RAM the CPU sees + EEPROM shadow. RECALL (9C00 write) copies
+// shadow -> RAM, STORE (OUT0 Q3 high with Q2 low, rising) copies RAM -> shadow (MAME nvram_recall_w / nvram_store_w).
+// The NVRAM file is the shadow; it is also recalled when reset ends.
+wire [7:0] nv_q, nvr_q, nve_q;
+reg  [8:0] cp_cnt = 9'd0;                           // 0-511: address = cnt[8:1], cnt[0] = write phase
+reg        cp_busy = 1'b0, cp_store = 1'b0, store_d = 1'b0, rst_d = 1'b1;
+wire       store_now = ~out0[2] & out0[3];
+wire       wr_recall = we && w_grp && a[9:7] == 3'b000;
+always @(posedge clk) begin
+    store_d <= store_now;
+    rst_d   <= sys_reset;
+    if (cp_busy) begin
+        cp_cnt <= cp_cnt + 9'd1;
+        if (&cp_cnt) cp_busy <= 1'b0;
+    end
+    else if ((rst_d && !sys_reset) || wr_recall) begin cp_busy <= 1'b1; cp_store <= 1'b0; cp_cnt <= 9'd0; end
+    else if (store_now && !store_d)              begin cp_busy <= 1'b1; cp_store <= 1'b1; cp_cnt <= 9'd0; end
+end
+dpram_dc #(.widthad_a(8)) nv_ram
 (
     .clock_a(clk), .address_a(a[7:0]), .data_a(cpu_dout), .wren_a(we & sel_nv), .q_a(nv_q),
-    .clock_b(clk), .address_b(8'd0), .q_b()
+    .clock_b(clk), .address_b(cp_cnt[8:1]), .data_b(nve_q), .wren_b(cp_busy & ~cp_store & cp_cnt[0]), .q_b(nvr_q)
 );
+dpram_dc #(.widthad_a(8)) nv_shadow
+(
+    .clock_a(clk), .address_a(nv_we ? nv_addr : cp_cnt[8:1]), .data_a(nv_we ? nv_din : nvr_q),
+    .wren_a(nv_we | (cp_busy & cp_store & cp_cnt[0])), .q_a(),
+    .clock_b(clk), .address_b(cp_busy ? cp_cnt[8:1] : nv_addr), .q_b(nve_q)
+);
+assign nv_dout = nve_q;
 
 // 32 colors: R = {A5, D7, D6}, B = D5-D3, G = D2-D0, inverted, 22k / 10k / 4.7k with 1k pull-down (MAME weights)
 reg  [8:0] cram[32];
@@ -315,7 +345,7 @@ pokey pokey1
     .data_out(pk1_q),
     .channel_0_out(p1c0), .channel_1_out(p1c1), .channel_2_out(p1c2), .channel_3_out(p1c3),
     .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset()
+    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
 );
 pokey pokey2
 (
@@ -326,13 +356,32 @@ pokey pokey2
     .data_out(pk2_q),
     .channel_0_out(p2c0), .channel_1_out(p2c1), .channel_2_out(p2c2), .channel_3_out(p2c3),
     .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset()
+    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
 );
 wire [7:0] pk2_rd = (a[3:0] == 4'h8) ? in1 : pk2_q;   // MAME pokey2 allpot_r = IN1
 
-wire [5:0] pk1 = {2'b00, p1c0} + {2'b00, p1c1} + {2'b00, p1c2} + {2'b00, p1c3};
-wire [5:0] pk2 = {2'b00, p2c0} + {2'b00, p2c1} + {2'b00, p2c2} + {2'b00, p2c3};
-assign audio = $signed({1'b0, {1'b0, pk1} + {1'b0, pk2}, 8'd0});
+// POKEY resistor DAC (MAME vol_init, see centiped_board.sv); MAME's OPAMP_C_TO_GROUND stage has no low-pass, only the
+// high-pass after it (DC removal here, ~7 Hz)
+function automatic [7:0] pk_dac(input [3:0] v);
+    case (v)
+        4'd0:  pk_dac = 8'd0;   4'd1:  pk_dac = 8'd6;   4'd2:  pk_dac = 8'd21;  4'd3:  pk_dac = 8'd27;
+        4'd4:  pk_dac = 8'd68;  4'd5:  pk_dac = 8'd74;  4'd6:  pk_dac = 8'd88;  4'd7:  pk_dac = 8'd94;
+        4'd8:  pk_dac = 8'd161; 4'd9:  pk_dac = 8'd167; 4'd10: pk_dac = 8'd181; 4'd11: pk_dac = 8'd187;
+        4'd12: pk_dac = 8'd228; 4'd13: pk_dac = 8'd234; 4'd14: pk_dac = 8'd249; default: pk_dac = 8'd255;
+    endcase
+endfunction
+wire [9:0] pk1 = pk_dac(p1c0) + pk_dac(p1c1) + pk_dac(p1c2) + pk_dac(p1c3);
+wire [9:0] pk2 = pk_dac(p2c0) + pk_dac(p2c1) + pk_dac(p2c2) + pk_dac(p2c3);
+reg  [9:0] dc_div = 10'd0;
+always @(posedge clk) dc_div <= dc_div + 10'd1;
+wire signed [15:0] pk_ac;
+jt49_dcrm2 #(.sw(16)) pk_dcrm
+(
+    .clk(clk), .cen(dc_div == 10'd0), .rst(~cpu_reset_n),
+    .din({1'b0, {1'b0, pk1} + {1'b0, pk2}, 4'd0}), .dout(pk_ac)
+);
+wire signed [16:0] pk_x2 = {pk_ac, 1'b0};             // x2 like the Centipede boards, saturated
+assign audio = (pk_x2 > 17'sd32767) ? 16'sd32767 : (pk_x2 < -17'sd32768) ? -16'sd32768 : pk_x2[15:0];
 
 always @* begin
     cpu_din = 8'hFF;

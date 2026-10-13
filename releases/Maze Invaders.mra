@@ -62,12 +62,16 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            08 1C 00 00 00 FF FF FF 44 02 00 00 00 00 00 00
+            08 1C 02 00 00 FF FF FF 44 02 00 00 00 00 00 00
             80 81 00 00 00 00 82 00 00 00 00 00 00 00 00 00
             06 00 05 13 15 11 12 17 0E 00 0D 14 00 83 00 84
             85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94
         </part>
     </rom>
+
+    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="64"></nvram>
 
     <remark>Maze Invaders (Prototype) (Atari)</remark>
     <mratimestamp>20261012000000</mratimestamp>

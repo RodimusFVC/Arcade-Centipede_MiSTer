@@ -43,12 +43,16 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            06 11 00 00 30 73 FF FF 00 00 00 00 00 00 00 00
+            06 11 02 00 30 73 FF FF 00 00 00 00 00 00 00 00
             00 00 00 00 05 13 00 00 00 00 00 00 0D 14 00 00
             04 03 02 01 15 11 12 16 0C 0B 0A 09 00 80 00 81
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
         </part>
     </rom>
+
+    <!-- Index 4: the board's save chip (128 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="128"></nvram>
 
     <remark>Multipede (Centipede/Millipede Multigame Kit) (Braze Technologies)</remark>
     <mratimestamp>20261012000000</mratimestamp>

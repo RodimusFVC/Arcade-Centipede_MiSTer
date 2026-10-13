@@ -54,12 +54,16 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            0A 09 00 00 DF 1F 00 00 00 00 00 00 00 00 00 00
+            0A 09 02 00 DF 1F 00 00 00 00 00 00 00 00 00 00
             12 11 16 15 80 00 05 06 81 82 83 13 14 84 00 00
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
         </part>
     </rom>
+
+    <!-- Index 4: the board's save chip (256 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="256"></nvram>
 
     <remark>Crystal Castles (Version 3, Spanish) (Atari)</remark>
     <mratimestamp>20261012000000</mratimestamp>

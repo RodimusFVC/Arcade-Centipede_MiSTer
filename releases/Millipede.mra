@@ -64,12 +64,16 @@
     <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
     <rom index="1">
         <part>
-            05 11 00 00 34 73 FF FF 14 02 00 00 00 00 00 00
+            05 11 02 00 34 73 FF FF 14 02 00 00 00 00 00 00
             80 81 82 83 05 13 00 00 00 00 84 85 0D 14 00 00
             04 03 02 01 15 11 12 16 0C 0B 0A 09 00 86 00 87
             88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94 95 96 97
         </part>
     </rom>
+
+    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="64"></nvram>
 
     <remark>Millipede (Atari)</remark>
     <mratimestamp>20261012000000</mratimestamp>
