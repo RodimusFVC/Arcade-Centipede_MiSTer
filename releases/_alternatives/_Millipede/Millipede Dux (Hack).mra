@@ -1,0 +1,76 @@
+<misterromdescription>
+    <name>Millipede Dux (Hack)</name>
+    <region>World</region>
+    <homebrew>no</homebrew>
+    <bootleg>yes</bootleg>
+    <version></version>
+    <alternative></alternative>
+    <platform></platform>
+    <series>Millipede</series>
+    <year>1989</year>
+    <manufacturer>hack (Two-Bit Score)</manufacturer>
+    <category>Shooter</category>
+
+    <setname>millipdd</setname>
+    <parent>milliped</parent>
+    <mameversion>0289</mameversion>
+    <rbf>Centipede</rbf>
+    <about></about>
+
+    <resolution>15kHz</resolution>
+    <rotation>vertical (ccw)</rotation>
+    <flip>yes</flip>
+
+    <players>2 (alternating)</players>
+    <joystick>8-way</joystick>
+    <special_controls>trackball</special_controls>
+    <num_buttons>1</num_buttons>
+    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+
+    <switches default="C4,14,02">
+        <dip name="Language" bits="0,1" ids="English,German,French,Spanish"/>
+        <dip name="Bonus" bits="2,3" ids="0,0 1x,0 1x 2x,0 1x 2x 3x"/>
+        <dip name="Credit Minimum" bits="4" ids="1,2"/>
+        <dip name="Coin Counters" bits="5" ids="1,2"/>
+        <dip name="Cabinet" bits="6" ids="Upright,Cocktail" values="1,0"/>
+        <dip name="Service Mode" bits="7" ids="Off,On" values="1,0"/>
+        <dip name="Millipede Head" bits="8" ids="Easy,Hard"/>
+        <dip name="Beetle" bits="9" ids="Easy,Hard"/>
+        <dip name="Lives" bits="10,11" ids="2,3,4,5"/>
+        <dip name="Bonus Life" bits="12,13" ids="12000,15000,20000,None"/>
+        <dip name="Spider" bits="14" ids="Easy,Hard"/>
+        <dip name="Starting Score Select" bits="15" ids="Off,On" values="1,0"/>
+        <dip name="Coinage" bits="16,17" ids="2C/1C,1C/1C,1C/2C,Free Play" values="3,2,1,0"/>
+        <dip name="Right Coin" bits="18,19" ids="*1,*4,*5,*6"/>
+        <dip name="Left Coin" bits="20" ids="*1,*2"/>
+        <dip name="Bonus Coins" bits="21,23" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins,Demo Mode" values="0,1,2,3,4,5,6"/>
+    </switches>
+
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, color PROM 0x14100 -->
+    <rom index="0" md5="none" zip="millipdd.zip|milliped.zip">
+        <part repeat="0x4000">00</part>
+        <part crc="40711675" name="136013-104.1mn"/>
+        <part crc="fb01baf2" name="136013-103.1l"/>
+        <part crc="62e137e0" name="136013-102.1jk"/>
+        <part crc="46752c7d" name="136013-101.1h"/>
+        <part repeat="0x8000">00</part>
+        <part crc="b6c617b6" name="mil-dux.5r"/>
+        <part repeat="0x1800">00</part>
+        <part crc="2a6ef4b0" name="mil-dux.5p"/>
+        <part repeat="0x1800">00</part>
+        <part crc="6fa3093a" name="136001-213.7e"/>
+    </rom>
+
+    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <rom index="1">
+        <part>
+            05 11 00 00 34 73 FF FF 14 02 00 00 00 00 00 00
+            80 81 82 83 05 13 00 00 00 00 84 85 0D 14 00 00
+            04 03 02 01 15 11 12 16 0C 0B 0A 09 00 86 00 87
+            88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94 95 96 97
+        </part>
+    </rom>
+
+    <remark>Millipede Dux (Hack) (Two-Bit Score)</remark>
+    <mratimestamp>20261012000000</mratimestamp>
+</misterromdescription>

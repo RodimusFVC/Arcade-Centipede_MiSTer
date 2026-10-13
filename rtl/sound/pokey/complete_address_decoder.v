@@ -1,7 +1,15 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
+/* verilator lint_off COMBDLY */
 module complete_address_decoder(addr_in, addr_decoded);
 	parameter               width = 1;
 	input [width-1:0]       addr_in;
@@ -33,3 +41,4 @@ module complete_address_decoder(addr_in, addr_decoded);
 	end
 	
 endmodule
+/* verilator lint_on COMBDLY */

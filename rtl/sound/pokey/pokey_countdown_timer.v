@@ -1,10 +1,19 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
-module pokey_countdown_timer(clk, enable, enable_underflow, reset_n, wr_en, data_in, data_out);
+/* verilator lint_off COMBDLY */
+module pokey_countdown_timer(clk, ce, enable, enable_underflow, reset_n, wr_en, data_in, data_out);
    parameter   underflow_delay = 3;
    input       clk;
+   input       ce;
    input       enable;
    input       enable_underflow;
    input       reset_n;
@@ -33,13 +42,13 @@ module pokey_countdown_timer(clk, enable, enable_underflow, reset_n, wr_en, data
    reg [1:0]   count_command;
    reg [1:0]   underflow_command;
    
-   delay_line #(underflow_delay) underflow0_delay(.clk(clk), .sync_reset(wr_en), .data_in(underflow), .enable(enable_underflow), .reset_n(reset_n), .data_out(data_out));
+   delay_line #(underflow_delay) underflow0_delay(.clk(clk), .ce(ce), .sync_reset(wr_en), .data_in(underflow), .enable(enable_underflow), .reset_n(reset_n), .data_out(data_out));
    
    
    always @(posedge clk or negedge reset_n)
       if (reset_n == 1'b0)
          count_reg <= {8{1'b0}};
-      else 
+      else if (ce)
          count_reg <= count_next;
    
    
@@ -48,7 +57,7 @@ module pokey_countdown_timer(clk, enable, enable_underflow, reset_n, wr_en, data
       count_command <= {enable, wr_en};
       case (count_command)
          2'b10 :
-            count_next <= (count_reg - 1);
+            count_next <= (count_reg - 8'b1);
          2'b01, 2'b11 :
             count_next <= data_in;
          default :
@@ -69,3 +78,4 @@ module pokey_countdown_timer(clk, enable, enable_underflow, reset_n, wr_en, data
    end
    
 endmodule
+/* verilator lint_on COMBDLY */

@@ -1,9 +1,18 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
-module pokey_poly_17_9(clk, reset_n, enable, select_9_17, init, bit_out, rand_out);
+/* verilator lint_off COMBDLY */
+module pokey_poly_17_9(clk, ce, reset_n, enable, select_9_17, init, bit_out, rand_out);
    input        clk;
+   input        ce;
    input        reset_n;
    input        enable;
    input        select_9_17;
@@ -31,7 +40,7 @@ module pokey_poly_17_9(clk, reset_n, enable, select_9_17, init, bit_out, rand_ou
          cycle_delay_reg <= 1'b0;
          select_9_17_del_reg <= 1'b0;
       end
-      else 
+      else  if (ce)
       begin
          shift_reg <= shift_next;
          cycle_delay_reg <= cycle_delay_next;
@@ -63,3 +72,4 @@ module pokey_poly_17_9(clk, reset_n, enable, select_9_17, init, bit_out, rand_ou
    assign rand_out[7:0] = (~(shift_reg[15:8]));
    
 endmodule
+/* verilator lint_on COMBDLY */

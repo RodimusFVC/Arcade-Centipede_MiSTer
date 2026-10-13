@@ -1,9 +1,18 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
-module pokey_noise_filter(clk, reset_n, noise_select, pulse_in, noise_4, noise_5, noise_large, sync_reset, pulse_out);
+/* verilator lint_off COMBDLY */
+module pokey_noise_filter(clk, ce, reset_n, noise_select, pulse_in, noise_4, noise_5, noise_large, sync_reset, pulse_out);
    input       clk;
+   input       ce;
    input       reset_n;
    
    input [2:0] noise_select;
@@ -26,7 +35,7 @@ module pokey_noise_filter(clk, reset_n, noise_select, pulse_in, noise_4, noise_5
    always @(posedge clk or negedge reset_n)
       if (reset_n == 1'b0)
          out_reg <= 1'b0;
-      else 
+      else if (ce)
          out_reg <= out_next;
    
    assign pulse_out = out_reg;
@@ -56,3 +65,4 @@ module pokey_noise_filter(clk, reset_n, noise_select, pulse_in, noise_4, noise_5
    end
    
 endmodule
+/* verilator lint_on COMBDLY */

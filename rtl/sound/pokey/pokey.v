@@ -1,10 +1,20 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+-- Added clock-enable signal (ce), 2022 Enceladus
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
-module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enable, keyboard_scan, keyboard_response, pot_in, sio_in1, sio_in2, sio_in3, data_out, channel_0_out, channel_1_out, channel_2_out, channel_3_out, irq_n_out, sio_out1, sio_out2, sio_out3, sio_clockin_in, sio_clockin_out, sio_clockin_oe, sio_clockout, pot_reset);
+/* verilator lint_off COMBDLY */
+module pokey(clk, ce, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enable, keyboard_scan, keyboard_response, pot_in, sio_in1, sio_in2, sio_in3, data_out, channel_0_out, channel_1_out, channel_2_out, channel_3_out, irq_n_out, sio_out1, sio_out2, sio_out3, sio_clockin_in, sio_clockin_out, sio_clockin_oe, sio_clockout, pot_reset);
    parameter    custom_keyboard_scan = 0;
    input        clk;
+   input        ce;
    input        enable_179;
    input [3:0]  addr;
    input [7:0]  data_in;
@@ -338,7 +348,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
       end
       
       else 
-      begin
+      if (ce) begin
          audf0_reg <= audf0_next;
          audc0_reg <= audc0_next;
          audf1_reg <= audf1_next;
@@ -454,13 +464,13 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    end
    
    
-   pokey_countdown_timer #(3) timer0(.clk(clk), .enable(audf0_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf0_reload), .data_in(audf0_next), .data_out(audf0_pulse));
+   pokey_countdown_timer #(3) timer0(.clk(clk), .ce(ce), .enable(audf0_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf0_reload), .data_in(audf0_next), .data_out(audf0_pulse));
    
-   pokey_countdown_timer #(3) timer1(.clk(clk), .enable(audf1_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf1_reload), .data_in(audf1_next), .data_out(audf1_pulse));
+   pokey_countdown_timer #(3) timer1(.clk(clk), .ce(ce), .enable(audf1_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf1_reload), .data_in(audf1_next), .data_out(audf1_pulse));
    
-   pokey_countdown_timer #(3) timer2(.clk(clk), .enable(audf2_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf2_reload), .data_in(audf2_next), .data_out(audf2_pulse));
+   pokey_countdown_timer #(3) timer2(.clk(clk), .ce(ce), .enable(audf2_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf2_reload), .data_in(audf2_next), .data_out(audf2_pulse));
    
-   pokey_countdown_timer #(3) timer3(.clk(clk), .enable(audf3_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf3_reload), .data_in(audf3_next), .data_out(audf3_pulse));
+   pokey_countdown_timer #(3) timer3(.clk(clk), .ce(ce), .enable(audf3_enable), .enable_underflow(enable_179), .reset_n(reset_n), .wr_en(audf3_reload), .data_in(audf3_next), .data_out(audf3_pulse));
    
    
    always @(audctl_reg or audf0_pulse or audf1_pulse or audf2_pulse or audf3_pulse or stimer_write_delayed or async_serial_reset or twotone_reset_delayed)
@@ -472,7 +482,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    end
    
    
-   latch_delay_line #(2) twotone_del(.clk(clk), .sync_reset(1'b0), .data_in(twotone_reset), .enable(enable_179), .reset_n(reset_n), .data_out(twotone_reset_delayed));
+   latch_delay_line #(2) twotone_del(.clk(clk), .ce(ce), .sync_reset(1'b0), .data_in(twotone_reset), .enable(enable_179), .reset_n(reset_n), .data_out(twotone_reset_delayed));
    
    
    always @(data_in or wr_en or addr_decoded or audf0_reg or audc0_reg or audf1_reg or audc1_reg or audf2_reg or audc2_reg or audf3_reg or audc3_reg or audf0_enable or audf1_enable or audf2_enable or audf3_enable or audctl_reg or irqen_reg or skctl_reg or serout_holding_reg)
@@ -639,16 +649,16 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    end
    
    
-   latch_delay_line #(3) stimer_delay(.clk(clk), .sync_reset(1'b0), .data_in(stimer_write), .enable(enable_179), .reset_n(reset_n), .data_out(stimer_write_delayed));
+   latch_delay_line #(3) stimer_delay(.clk(clk), .ce(ce), .sync_reset(1'b0), .data_in(stimer_write), .enable(enable_179), .reset_n(reset_n), .data_out(stimer_write_delayed));
    
    
-   pokey_noise_filter pokey_noise_filter0(.clk(clk), .reset_n(reset_n), .noise_select(audc0_reg[7:5]), .pulse_in(audf0_pulse), .pulse_out(audf0_pulse_noise), .noise_4(noise_4), .noise_5(noise_5), .noise_large(noise_large), .sync_reset(stimer_write_delayed));
+   pokey_noise_filter pokey_noise_filter0(.clk(clk), .ce(ce), .reset_n(reset_n), .noise_select(audc0_reg[7:5]), .pulse_in(audf0_pulse), .pulse_out(audf0_pulse_noise), .noise_4(noise_4), .noise_5(noise_5), .noise_large(noise_large), .sync_reset(stimer_write_delayed));
    
-   pokey_noise_filter pokey_noise_filter1(.clk(clk), .reset_n(reset_n), .noise_select(audc1_reg[7:5]), .pulse_in(audf1_pulse), .pulse_out(audf1_pulse_noise), .noise_4(noise_4_reg[0]), .noise_5(noise_5_reg[0]), .noise_large(noise_large_reg[0]), .sync_reset(stimer_write_delayed));
+   pokey_noise_filter pokey_noise_filter1(.clk(clk), .ce(ce), .reset_n(reset_n), .noise_select(audc1_reg[7:5]), .pulse_in(audf1_pulse), .pulse_out(audf1_pulse_noise), .noise_4(noise_4_reg[0]), .noise_5(noise_5_reg[0]), .noise_large(noise_large_reg[0]), .sync_reset(stimer_write_delayed));
    
-   pokey_noise_filter pokey_noise_filter2(.clk(clk), .reset_n(reset_n), .noise_select(audc2_reg[7:5]), .pulse_in(audf2_pulse), .pulse_out(audf2_pulse_noise), .noise_4(noise_4_reg[1]), .noise_5(noise_5_reg[1]), .noise_large(noise_large_reg[1]), .sync_reset(stimer_write_delayed));
+   pokey_noise_filter pokey_noise_filter2(.clk(clk), .ce(ce), .reset_n(reset_n), .noise_select(audc2_reg[7:5]), .pulse_in(audf2_pulse), .pulse_out(audf2_pulse_noise), .noise_4(noise_4_reg[1]), .noise_5(noise_5_reg[1]), .noise_large(noise_large_reg[1]), .sync_reset(stimer_write_delayed));
    
-   pokey_noise_filter pokey_noise_filter3(.clk(clk), .reset_n(reset_n), .noise_select(audc3_reg[7:5]), .pulse_in(audf3_pulse), .pulse_out(audf3_pulse_noise), .noise_4(noise_4_reg[2]), .noise_5(noise_5_reg[2]), .noise_large(noise_large_reg[2]), .sync_reset(stimer_write_delayed));
+   pokey_noise_filter pokey_noise_filter3(.clk(clk), .ce(ce), .reset_n(reset_n), .noise_select(audc3_reg[7:5]), .pulse_in(audf3_pulse), .pulse_out(audf3_pulse_noise), .noise_4(noise_4_reg[2]), .noise_5(noise_5_reg[2]), .noise_large(noise_large_reg[2]), .sync_reset(stimer_write_delayed));
    
    assign chan0_output_next = audf0_pulse_noise;
    assign chan1_output_next = audf1_pulse_noise;
@@ -692,20 +702,17 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    end
    
    
-   syncreset_enable_divider #(28, 6) enable_64_div(.clk(clk), .syncreset(initmode), .reset_n(reset_n), .enable_in(enable_179), .enable_out(enable_64));
+   syncreset_enable_divider #(28, 6) enable_64_div(.clk(clk), .ce(ce), .syncreset(initmode), .reset_n(reset_n), .enable_in(enable_179), .enable_out(enable_64));
    
-   
-   syncreset_enable_divider #(114, 33) enable_15_div(.clk(clk), .syncreset(initmode), .reset_n(reset_n), .enable_in(enable_179), .enable_out(enable_15));
+   syncreset_enable_divider #(114, 33) enable_15_div(.clk(clk), .ce(ce), .syncreset(initmode), .reset_n(reset_n), .enable_in(enable_179), .enable_out(enable_15));
    
    assign initmode = ~(skctl_next[1] | skctl_next[0]);
    
-   pokey_poly_17_9 poly_17_19_lfsr(.clk(clk), .reset_n(reset_n), .init(initmode), .enable(enable_179), .select_9_17(audctl_reg[7]), .bit_out(noise_large), .rand_out(rand_out));
-   
-   
-   pokey_poly_5 poly_5_lfsr(.clk(clk), .reset_n(reset_n), .init(initmode), .enable(enable_179), .bit_out(noise_5));
-   
-   
-   pokey_poly_4 poly_4_lfsr(.clk(clk), .reset_n(reset_n), .init(initmode), .enable(enable_179), .bit_out(noise_4));
+   pokey_poly_17_9 poly_17_19_lfsr(.clk(clk), .ce(ce), .reset_n(reset_n), .init(initmode), .enable(enable_179), .select_9_17(audctl_reg[7]), .bit_out(noise_large), .rand_out(rand_out));
+     
+   pokey_poly_5 poly_5_lfsr(.clk(clk), .ce(ce), .reset_n(reset_n), .init(initmode), .enable(enable_179), .bit_out(noise_5));
+     
+   pokey_poly_4 poly_4_lfsr(.clk(clk), .ce(ce), .reset_n(reset_n), .init(initmode), .enable(enable_179), .bit_out(noise_4));
    
    
    always @(noise_large_reg or noise_5_reg or noise_4_reg or noise_large or noise_5 or noise_4 or enable_179)
@@ -745,7 +752,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    
    assign serout_sync_reset = serial_reset | stimer_write_delayed;
    
-   delay_line #(2) serout_clock_delay(.clk(clk), .sync_reset(serout_sync_reset), .data_in(serout_enable), .enable(enable_179), .reset_n(reset_n), .data_out(serout_enable_delayed));
+   delay_line #(2) serout_clock_delay(.clk(clk), .ce(ce), .sync_reset(serout_sync_reset), .data_in(serout_enable), .enable(enable_179), .reset_n(reset_n), .data_out(serout_enable_delayed));
    
    
    always @(serout_enable_delayed or skctl_reg or serout_active_reg or serout_clock_last_reg or serout_clock_reg or serout_holding_load or serout_holding_reg or serout_holding_full_reg or serout_shift_reg or serout_bitcount_reg or serial_out_reg or twotone_reg or audf0_pulse or audf1_pulse or serial_reset)
@@ -801,7 +808,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
             end
          end
          else
-            serout_bitcount_next <= (serout_bitcount_reg - 1);
+            serout_bitcount_next <= (serout_bitcount_reg - 4'b1);
       end
       
       if (skctl_reg[7] == 1'b1)
@@ -823,15 +830,15 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    end
    
    
-   synchronizer sio_in1_synchronizer(.clk(clk), .raw(sio_in1), .sync(sio_in1_reg));
+   synchronizer sio_in1_synchronizer(.clk(clk), .ce(ce), .raw(sio_in1), .sync(sio_in1_reg));
    
-   synchronizer sio_in2_synchronizer(.clk(clk), .raw(sio_in2), .sync(sio_in2_reg));
+   synchronizer sio_in2_synchronizer(.clk(clk), .ce(ce), .raw(sio_in2), .sync(sio_in2_reg));
    
-   synchronizer sio_in3_synchronizer(.clk(clk), .raw(sio_in3), .sync(sio_in3_reg));
+   synchronizer sio_in3_synchronizer(.clk(clk), .ce(ce), .raw(sio_in3), .sync(sio_in3_reg));
+   
    assign sio_in_next = sio_in1_reg & sio_in2_reg & sio_in3_reg;
    
-   assign waiting_for_start_bit = (serin_bitcount_reg == 4'h9) ? 1'b1 : 
-                                  1'b0;
+   assign waiting_for_start_bit = (serin_bitcount_reg == 4'h9) ? 1'b1 : 1'b0;
    
    always @(serin_enable or serin_clock_last_reg or serin_clock_reg or sio_in_reg or serin_reg or serin_shift_reg or serin_bitcount_reg or serial_ip_overrun_reg or serial_ip_framing_reg or skrest_write or irqst_reg or skctl_reg or waiting_for_start_bit or serial_reset)
    begin
@@ -878,7 +885,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
                   serial_ip_framing_next <= 1'b1;
             end
             else
-               serin_bitcount_next <= (serin_bitcount_reg - 1);
+               serin_bitcount_next <= (serin_bitcount_reg - 4'b1);
          end
       end
       
@@ -970,7 +977,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
       if (custom_keyboard_scan == 1)
       begin : gen_custom_scan
          
-         pokey_keyboard_scanner pokey_keyboard_scanner1(.clk(clk), .reset_n(reset_n), .enable(keyboard_scan_enable), .keyboard_response(keyboard_response), .debounce_disable((~(skctl_reg[0]))), .scan_enable(skctl_reg[1]), .keyboard_scan(keyboard_scan), .key_held(key_held), .shift_held(shift_held), .keycode(kbcode), .other_key_irq(other_key_irq), .break_irq(break_irq));
+         pokey_keyboard_scanner pokey_keyboard_scanner1(.clk(clk), .ce(ce), .reset_n(reset_n), .enable(keyboard_scan_enable), .keyboard_response(keyboard_response), .debounce_disable((~(skctl_reg[0]))), .scan_enable(skctl_reg[1]), .keyboard_scan(keyboard_scan), .key_held(key_held), .shift_held(shift_held), .keycode(kbcode), .other_key_irq(other_key_irq), .break_irq(break_irq));
       end
    endgenerate
    
@@ -978,7 +985,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
       if (custom_keyboard_scan == 0)
       begin : gen_normal_scan
          
-         pokey_keyboard_scanner pokey_keyboard_scanner1(.clk(clk), .reset_n(reset_n), .enable(enable_15), .keyboard_response(keyboard_response), .debounce_disable((~(skctl_reg[0]))), .scan_enable(skctl_reg[1]), .keyboard_scan(keyboard_scan), .key_held(key_held), .shift_held(shift_held), .keycode(kbcode), .other_key_irq(other_key_irq), .break_irq(break_irq));
+         pokey_keyboard_scanner pokey_keyboard_scanner1(.clk(clk), .ce(ce), .reset_n(reset_n), .enable(enable_15), .keyboard_response(keyboard_response), .debounce_disable((~(skctl_reg[0]))), .scan_enable(skctl_reg[1]), .keyboard_scan(keyboard_scan), .key_held(key_held), .shift_held(shift_held), .keycode(kbcode), .other_key_irq(other_key_irq), .break_irq(break_irq));
       end
    endgenerate
    
@@ -1002,7 +1009,7 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
       
       if (((enable_15 & (~(skctl_reg[2]))) | (enable_179 & skctl_reg[2])) == 1'b1)
       begin
-         pot_counter_next <= (pot_counter_reg + 1);
+         pot_counter_next <= (pot_counter_reg + 8'b1);
          if (pot_counter_reg == 8'he4)
          begin
             pot_reset_next <= 1'b1;
@@ -1058,3 +1065,5 @@ module pokey(clk, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_enabl
    assign pot_reset = pot_reset_reg;
    
 endmodule
+
+/* verilator lint_on COMBDLY */

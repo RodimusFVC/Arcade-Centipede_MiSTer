@@ -1,11 +1,20 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
-module syncreset_enable_divider(clk, syncreset, reset_n, enable_in, enable_out);
+/* verilator lint_off COMBDLY */
+module syncreset_enable_divider(clk, ce, syncreset, reset_n, enable_in, enable_out);
    parameter       count = 1;
    parameter       resetcount = 0;
    input           clk;
+   input           ce;
    input           syncreset;
    input           reset_n;
    input           enable_in;
@@ -25,8 +34,8 @@ module syncreset_enable_divider(clk, syncreset, reset_n, enable_in, enable_out);
          count_reg <= {width{1'b0}};
          enabled_out_reg <= 1'b0;
       end
-      else 
-      begin
+      else if (ce)
+      begin 
          count_reg <= count_next;
          enabled_out_reg <= enabled_out_next;
       end
@@ -56,3 +65,4 @@ module syncreset_enable_divider(clk, syncreset, reset_n, enable_in, enable_out);
    assign enable_out = enabled_out_reg & enable_in;
    
 endmodule
+/* verilator lint_on COMBDLY */

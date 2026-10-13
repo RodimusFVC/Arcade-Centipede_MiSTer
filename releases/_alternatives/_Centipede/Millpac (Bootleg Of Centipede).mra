@@ -1,0 +1,73 @@
+<misterromdescription>
+    <name>Millpac (Bootleg Of Centipede)</name>
+    <region>World</region>
+    <homebrew>no</homebrew>
+    <bootleg>yes</bootleg>
+    <version></version>
+    <alternative></alternative>
+    <platform></platform>
+    <series>Centipede</series>
+    <year>1980</year>
+    <manufacturer>bootleg? (Valadon Automation)</manufacturer>
+    <category>Shooter</category>
+
+    <setname>millpac</setname>
+    <parent>centiped</parent>
+    <mameversion>0289</mameversion>
+    <rbf>Centipede</rbf>
+    <about></about>
+
+    <resolution>15kHz</resolution>
+    <rotation>vertical (ccw)</rotation>
+    <flip>yes</flip>
+
+    <players>2 (alternating)</players>
+    <joystick>8-way</joystick>
+    <special_controls>trackball</special_controls>
+    <num_buttons>1</num_buttons>
+    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+
+    <switches default="52,09,00">
+        <dip name="Cabinet" bits="0" ids="Upright,Cocktail"/>
+        <dip name="Service Mode" bits="1" ids="Off,On" values="1,0"/>
+        <dip name="Language" bits="2,3" ids="English,German,French,Spanish"/>
+        <dip name="Lives" bits="4,5" ids="2,3,4,5"/>
+        <dip name="Bonus Life" bits="6,7" ids="10000,12000,15000,20000"/>
+        <dip name="Difficulty" bits="8" ids="Easy,Hard" values="1,0"/>
+        <dip name="Credit Minimum" bits="9" ids="1,2"/>
+        <dip name="Coinage" bits="10,11" ids="2C/1C,1C/1C,1C/2C,Free Play" values="3,2,1,0"/>
+        <dip name="Right Coin" bits="12,13" ids="*1,*4,*5,*6"/>
+        <dip name="Left Coin" bits="14" ids="*1,*2"/>
+        <dip name="Bonus Coins" bits="15,17" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins" values="0,1,2,3,4,5"/>
+    </switches>
+
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, color PROM 0x14100 -->
+    <rom index="0" md5="none" zip="millpac.zip|centiped.zip">
+        <part repeat="0x2000">00</part>
+        <part crc="4dd6913d" name="millpac1.1d"/>
+        <part crc="411c81f1" name="millpac2.1e"/>
+        <part crc="577076cc" name="millpac3.1h"/>
+        <part crc="89aedd75" name="millpac4.1j"/>
+        <part repeat="0x2000">00</part>
+        <part crc="67ac481b" name="millpac5.1k"/>
+        <part repeat="0x9800">00</part>
+        <part crc="79f05520" name="millpac6.7f"/>
+        <part repeat="0x1800">00</part>
+        <part crc="4880b2bd" name="millpac7.7j"/>
+        <part repeat="0x1800">00</part>
+        <part crc="6fa3093a" name="136001-213.p4"/>
+    </rom>
+
+    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <rom index="1">
+        <part>
+            02 11 00 00 20 FF 00 FF 54 02 00 00 00 00 00 00
+            00 00 00 00 80 81 00 00 13 14 05 0D 15 11 12 16
+            00 00 00 00 00 00 00 00 0A 09 0C 0B 01 02 03 04
+            82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91
+        </part>
+    </rom>
+
+    <remark>Millpac (Bootleg Of Centipede) (Bootleg? (Valadon Automation))</remark>
+    <mratimestamp>20261012000000</mratimestamp>
+</misterromdescription>

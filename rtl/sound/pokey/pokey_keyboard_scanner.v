@@ -1,9 +1,20 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
 
-module pokey_keyboard_scanner(clk, reset_n, enable, keyboard_response, debounce_disable, scan_enable, keyboard_scan, key_held, shift_held, keycode, other_key_irq, break_irq);
+/* verilator lint_off COMBDLY */
+
+module pokey_keyboard_scanner(clk, ce, reset_n, enable, keyboard_response, debounce_disable, scan_enable, keyboard_scan, key_held, shift_held, keycode, other_key_irq, break_irq);
    input           clk;
+   input           ce;
    input           reset_n;
    
    input           enable;
@@ -70,7 +81,7 @@ module pokey_keyboard_scanner(clk, reset_n, enable, keyboard_response, debounce_
          irq_reg <= 1'b0;
          break_irq_reg <= 1'b0;
       end
-      else 
+      else if (ce)
       begin
          bincnt_reg <= bincnt_next;
          state_reg <= state_next;
@@ -105,7 +116,7 @@ module pokey_keyboard_scanner(clk, reset_n, enable, keyboard_response, debounce_
       
       if (enable == 1'b1 & scan_enable == 1'b1)
       begin
-         bincnt_next <= (bincnt_reg + 1);
+         bincnt_next <= (bincnt_reg + 6'b1);
          
          key_held_next <= 1'b0;
          
@@ -198,3 +209,4 @@ module pokey_keyboard_scanner(clk, reset_n, enable, keyboard_response, debounce_
    assign break_irq = break_irq_reg;
    
 endmodule
+/* verilator lint_on COMBDLY */

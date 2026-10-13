@@ -1,0 +1,21 @@
+set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
+
+set_global_assignment -name SYSTEMVERILOG_FILE Arcade-Centipede.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/centiped_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/eeprom_93c46.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/paddle_ctl.sv
+
+set_global_assignment -name QIP_FILE rtl/cpu/T65/t65.qip
+set_global_assignment -name QIP_FILE rtl/sound/pokey/pokey.qip
+set_global_assignment -name QIP_FILE rtl/sound/jt49/hdl/jt49.qip
+set_global_assignment -name QIP_FILE rtl/sound/jt89/syn/quartus/jt89_verilog.qip
+set_global_assignment -name VERILOG_FILE rtl/sound/jt49/hdl/filter/jt49_dcrm2.v
+
+set_global_assignment -name VERILOG_FILE rtl/mister_custom/pause.v
+
+set_global_assignment -name VHDL_FILE rtl/ram_rom/dpram_dc.vhd
+
+set_global_assignment -name VHDL_FILE rtl/cpu/s2650/base/base_pack.vhd
+set_global_assignment -name VHDL_FILE rtl/cpu/s2650/sgs2650_pack.vhd
+set_global_assignment -name VHDL_FILE rtl/cpu/s2650/sgs2650.vhd
+set_global_assignment -name VHDL_FILE rtl/cpu/s2650/s2650_cpu.vhd

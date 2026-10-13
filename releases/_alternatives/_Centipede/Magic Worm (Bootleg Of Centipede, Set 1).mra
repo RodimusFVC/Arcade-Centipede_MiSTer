@@ -1,0 +1,71 @@
+<misterromdescription>
+    <name>Magic Worm (Bootleg Of Centipede, Set 1)</name>
+    <region>World</region>
+    <homebrew>no</homebrew>
+    <bootleg>yes</bootleg>
+    <version></version>
+    <alternative></alternative>
+    <platform></platform>
+    <series>Centipede</series>
+    <year>1980</year>
+    <manufacturer>bootleg (Sidam)</manufacturer>
+    <category>Shooter</category>
+
+    <setname>magworm</setname>
+    <parent>centiped</parent>
+    <mameversion>0289</mameversion>
+    <rbf>Centipede</rbf>
+    <about></about>
+
+    <resolution>15kHz</resolution>
+    <rotation>vertical (ccw)</rotation>
+    <flip>yes</flip>
+
+    <players>2 (alternating)</players>
+    <joystick>8-way</joystick>
+    <special_controls>trackball</special_controls>
+    <num_buttons>1</num_buttons>
+    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+
+    <switches default="0A,41,01">
+        <dip name="Cabinet" bits="0" ids="Upright,Cocktail"/>
+        <dip name="Service Mode" bits="1" ids="Off,On" values="1,0"/>
+        <dip name="Coinage" bits="2,3" ids="2C/1C,1C/1C,1C/2C,Free Play" values="3,2,1,0"/>
+        <dip name="Right Coin" bits="4,5" ids="*3,*7,*1/2,*6"/>
+        <dip name="Language" bits="6,7" ids="English,German,French,Spanish"/>
+        <dip name="Lives" bits="8,9" ids="2,3,4,5"/>
+        <dip name="Left Coin" bits="10" ids="*1,*2"/>
+        <dip name="Bonus Coins" bits="11,13" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins" values="0,1,2,3,4,5"/>
+        <dip name="Bonus Life" bits="14,15" ids="10000,12000,15000,20000"/>
+        <dip name="Difficulty" bits="16" ids="Easy,Hard" values="1,0"/>
+        <dip name="Credit Minimum" bits="17" ids="1,2"/>
+    </switches>
+
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, color PROM 0x14100 -->
+    <rom index="0" md5="none" zip="magworm.zip|centiped.zip">
+        <part repeat="0x2000">00</part>
+        <part crc="a88e970a" name="11005-0.k0"/>
+        <part crc="7a04047e" name="11005-1.k1"/>
+        <part crc="f127f1c3" name="11005-2.k2"/>
+        <part crc="478d92b4" name="11005-3p.k3"/>
+        <part repeat="0xC000">00</part>
+        <part crc="cea64e1a" name="11005-4.c4"/>
+        <part repeat="0x1800">00</part>
+        <part crc="24558ea5" name="11005-5.c5"/>
+        <part repeat="0x1800">00</part>
+        <part crc="6fa3093a" name="136001-213.p4"/>
+    </rom>
+
+    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <rom index="1">
+        <part>
+            04 19 00 00 20 FF 00 FF 42 50 00 00 00 00 00 00
+            00 00 00 00 80 81 00 00 13 14 05 0D 15 12 11 16
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91
+        </part>
+    </rom>
+
+    <remark>Magic Worm (Bootleg Of Centipede, Set 1) (Sidam)</remark>
+    <mratimestamp>20261012000000</mratimestamp>
+</misterromdescription>

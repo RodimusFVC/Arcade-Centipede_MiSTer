@@ -1,9 +1,18 @@
-// Converted to Verilog from original VHDL code (c) 2013 mark watson
+/*---------------------------------------------------------------------------
+-- (c) 2013 mark watson
+-- I am happy for anyone to use this for non-commercial use.
+-- If my vhdl files are used commercially or otherwise sold,
+-- please contact me for explicit permission at scrameta (gmail).
+-- This applies for source and binary form and derived works.
+--
+-- Converted to Verilog from original VHDL
+--------------------------------------------------------------------------*/
 
 `timescale 1 ps / 1 ps
-
-module pokey_poly_5(clk, reset_n, enable, init, bit_out);
+/* verilator lint_off COMBDLY */
+module pokey_poly_5(clk, ce, reset_n, enable, init, bit_out);
    input     clk;
+   input     ce;
    input     reset_n;
    input     enable;
    input     init;
@@ -16,7 +25,7 @@ module pokey_poly_5(clk, reset_n, enable, init, bit_out);
    always @(posedge clk or negedge reset_n)
       if (reset_n == 1'b0)
          shift_reg <= 5'b01010;
-      else 
+      else if (ce)
          shift_reg <= shift_next;
    
    
@@ -30,3 +39,4 @@ module pokey_poly_5(clk, reset_n, enable, init, bit_out);
    assign bit_out = shift_reg[0];
    
 endmodule
+/* verilator lint_on COMBDLY */
