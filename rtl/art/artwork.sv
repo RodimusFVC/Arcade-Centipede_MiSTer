@@ -25,6 +25,8 @@ module artwork
     input       [2:0] layer_off,       // [0] backdrops, [1] overlays, [2] bezels (MAME's layer toggles)
     input             side_off,        // layers beside the screen (side art) off
     input             zoom,            // framebuffer shows the screen area only
+    input             crt_flip,        // board picture is rotated 180 (CRT Flip): artwork follows on the core video
+    input             hdmi_flip,       // HDMI Flip; the framebuffer is rotated 180 when crt_flip ^ hdmi_flip
     output            avail,           // this game has artwork
 
     input             ioctl_download,
@@ -453,7 +455,7 @@ reg         nb_half;
 dpram_dc #(.widthad_a(9), .width_a(64)) nbuf
 (
     .clock_a(clk), .address_a({nb_half, 8'(nb_x + ebeat)}), .data_a(DDRAM_DOUT), .wren_a(e_rd[0]), .q_a(),
-    .clock_b(clk), .address_b({gy_c[0], gx_c[7:0]}), .q_b(nb_q)
+    .clock_b(clk), .address_b({gy_c[0], crt_flip ? 8'(v_nw - 12'd1 - {3'd0, gx_c}) : gx_c[7:0]}), .q_b(nb_q)
 );
 
 reg  run = 1'b0;
@@ -491,7 +493,7 @@ always @(posedge clk) begin
         if (line_inc) pf_upto <= gy_c + 9'd1;
         if (pf_on && !p_req) begin
             if (pf_row <= pf_upto && pf_row < v_nh[8:0]) begin
-                p_addr <= N_W + {11'd0, pf_row, 9'd0} + {21'd0, nb_x};
+                p_addr <= N_W + {11'd0, crt_flip ? 9'(v_nh - 12'd1 - {3'd0, pf_row}) : pf_row, 9'd0} + {21'd0, nb_x};
                 p_len <= (v_nw - {4'd0, nb_x} > 12'd64) ? 8'd64 : 8'(v_nw - {4'd0, nb_x});
                 p_req <= 1'b1;
                 nb_half <= pf_row[0];
@@ -510,21 +512,29 @@ reg  [1:0] i_fb = 2'd0, o_fb = 2'd1, l_fb = 2'd2;
 reg        fresh = 1'b0, vbl_pend = 1'b0, old_fbvbl = 1'b0;
 // shown area: the screen (zoom), else the screen plus every layer drawn (a layer switched off gives its space back)
 reg [11:0] k_x0, k_y0, k_x1, k_y1;
+wire       fbf = crt_flip ^ hdmi_flip;                                   // framebuffer written rotated 180
+wire [11:0] sa_x0 = zoom ? v_sx : k_x0, sa_y0 = zoom ? v_sy : k_y0;
+wire [11:0] sa_x1 = zoom ? v_sx + v_sw : k_x1, sa_y1 = zoom ? v_sy + v_sh : k_y1;
+wire [11:0] fa_x = fbf ? v_cw - sa_x1 : sa_x0, fa_y = fbf ? v_ch - sa_y1 : sa_y0;
 assign     fb_base = {6'b001100, 2'b11, 24'd0} + {6'd0, o_fb, 24'd0}     // 33000000 + n * 01000000
-                   + (zoom ? {7'd0, v_sy, 13'd0} + {18'd0, v_sx, 2'd0} : {7'd0, k_y0, 13'd0} + {18'd0, k_x0, 2'd0});
-assign     canvas_w = zoom ? v_sw : k_x1 - k_x0;
-assign     canvas_h = zoom ? v_sh : k_y1 - k_y0;
+                   + {7'd0, fa_y, 13'd0} + {18'd0, fa_x, 2'd0};
+assign     canvas_w = sa_x1 - sa_x0;
+assign     canvas_h = sa_y1 - sa_y0;
 
 reg        cp_init = 1'b0;           // one clock: write all three buffers from S (game = black)
 reg        cp_idone = 1'b0;
 reg        cp_imode;
 reg        frame_pend = 1'b0, cp_late = 1'b0;
 wire       cp_done1 = cst == C_WR && e_ack[1] && !cp_imode && cp_x + {5'd0, cp_n} == cp_xend && cp_r + 12'd1 == cp_rows;
-localparam C_IDLE = 3'd0, C_ROW = 3'd1, C_CHUNK = 3'd2, C_RD = 3'd3, C_CALC = 3'd4, C_WR = 3'd5;
+localparam C_IDLE = 3'd0, C_ROW = 3'd1, C_CHUNK = 3'd2, C_RD = 3'd3, C_CALC = 3'd4, C_WR = 3'd5, C_GY = 3'd6;
 reg  [2:0] cst = C_IDLE;
 reg [11:0] cp_row, cp_r, cp_x, cp_xend, cp_rows;
-reg  [8:0] cp_gy, cp_gx;
-reg [23:0] cp_vacc, cp_hacc;
+reg  [8:0] cp_k, cp_gx;              // capture line needed by this row (raster order), game x
+reg [23:0] cp_hacc;
+reg [23:0] dv_rem;                   // per-row game line: (row offset * NH) / SH, restoring divide
+reg  [8:0] dv_q;
+reg  [3:0] dv_b = 4'd0;
+reg [11:0] dv_o;
 reg  [6:0] cp_n, cp_i, cp_i1;
 reg        cp_v1;
 reg  [1:0] cp_buf;
@@ -534,6 +544,8 @@ reg [63:0] cw_d;
 reg        cw_we;
 reg  [4:0] cw_a;
 wire       in_rect = !cp_imode;
+wire [11:0] fb_row = fbf ? v_ch - 12'd1 - cp_row : cp_row;
+wire [11:0] fb_x   = fbf ? v_cw - cp_x - {5'd0, cp_n} : cp_x;
 
 dpram_dc #(.widthad_a(6), .width_a(64)) ccbuf
 (
@@ -547,7 +559,7 @@ dpram_dc #(.widthad_a(5), .width_a(64)) cwbuf
     .clock_b(clk), .address_b(wb_nxt[4:0]), .q_b(cw_q)
 );
 assign k_wdata = cw_q;
-always @* gr_ra = {cp_gy[2:0], cp_gx[7:0]};
+always @* gr_ra = {cp_k[2:0], crt_flip ? 8'(v_nw - 12'd1 - {3'd0, cp_gx}) : cp_gx[7:0]};
 
 wire [23:0] g1 = in_rect ? gr_q : 24'd0;
 wire [31:0] cpx = {8'd0, comp(g1[7:0], cc_q[23:16], cc_q[55:48]), comp(g1[15:8], cc_q[15:8], cc_q[47:40]), comp(g1[23:16], cc_q[7:0], cc_q[39:32])};
@@ -570,8 +582,8 @@ always @(posedge clk) begin
             end else if (!run) frame_pend <= 1'b0;                 // only frames that begin while drawing count
             else if (frame_pend) begin
                 frame_pend <= 1'b0;
-                cp_imode <= 1'b0; cp_row <= v_sy; cp_r <= 12'd0; cp_rows <= v_sh;
-                cp_gy <= 9'd0; cp_vacc <= 24'd0; cp_late <= 1'b0; cst <= C_ROW;
+                cp_imode <= 1'b0; cp_r <= 12'd0; cp_rows <= v_sh;
+                dv_b <= 4'd0; cp_late <= 1'b0; cst <= C_GY;
             end
         end
         C_ROW: begin
@@ -579,7 +591,24 @@ always @(posedge clk) begin
             cp_xend <= cp_imode ? v_cw : v_sx + v_sw;
             cp_gx <= 9'd0; cp_hacc <= 24'd0;
             // running late into the next game frame: finish this one anyway (at worst a tear), the next starts at once
-            if (cp_imode || cp_late || frame_end || {3'd0, gy_c} > {3'd0, cp_gy}) cst <= C_CHUNK;
+            if (cp_imode || cp_late || frame_end || {3'd0, gy_c} > {3'd0, cp_k}) cst <= C_CHUNK;
+        end
+        C_GY: begin
+            // CRT Flip: the picture arrives bottom-up, so the screen rect is composited bottom-up (capture order)
+            if (dv_b == 4'd0) begin
+                dv_o = crt_flip ? cp_rows - 12'd1 - cp_r : cp_r;
+                cp_row <= v_sy + dv_o;
+                dv_rem <= dv_o * v_nh; dv_q <= 9'd0; dv_b <= 4'd10;
+            end else if (dv_b != 4'd1) begin
+                if (dv_rem >= ({12'd0, v_sh} << (dv_b - 4'd2))) begin
+                    dv_rem <= dv_rem - ({12'd0, v_sh} << (dv_b - 4'd2));
+                    dv_q[dv_b - 4'd2] <= 1'b1;
+                end
+                dv_b <= dv_b - 4'd1;
+            end else begin
+                cp_k <= crt_flip ? 9'(v_nh - 12'd1 - {3'd0, dv_q}) : dv_q;
+                dv_b <= 4'd0; cst <= C_ROW;
+            end
         end
         C_CHUNK: begin
             cp_n <= (cp_xend - cp_x > 12'd64) ? 7'd64 : 7'(cp_xend - cp_x);
@@ -599,13 +628,16 @@ always @(posedge clk) begin
             end
             if (cp_v1) begin
                 if (!cp_i1[0]) cp_lo <= cpx;
-                else begin cw_a <= cp_i1[5:1]; cw_d <= {cpx, cp_lo}; cw_we <= 1'b1; end
+                else begin                // framebuffer rotated 180: words in reverse order, pixels swapped
+                    cw_a <= fbf ? 5'(cp_n[6:1] - 6'd1 - {1'b0, cp_i1[5:1]}) : cp_i1[5:1];
+                    cw_d <= fbf ? {cp_lo, cpx} : {cpx, cp_lo}; cw_we <= 1'b1;
+                end
                 if (cp_i1 == cp_n - 7'd1) begin cp_buf <= 2'd0; cst <= C_WR; end
             end
         end
         C_WR: begin
             if (!k_req && !e_wr[1] && !e_ack[1]) begin
-                k_addr <= FB0_W + {5'd0, (cp_imode ? cp_buf : i_fb), 21'd0} + {7'd0, cp_row[10:0], 10'd0} + {18'd0, cp_x[11:1]};
+                k_addr <= FB0_W + {5'd0, (cp_imode ? cp_buf : i_fb), 21'd0} + {7'd0, fb_row[10:0], 10'd0} + {18'd0, fb_x[11:1]};
                 k_len <= {2'd0, cp_n[6:1]}; k_we <= 1'b1; k_req <= 1'b1;
             end
             if (e_ack[1]) begin
@@ -614,8 +646,6 @@ always @(posedge clk) begin
                     if (cp_x + {5'd0, cp_n} != cp_xend) begin cp_x <= cp_x + {5'd0, cp_n}; cst <= C_CHUNK; end
                     else begin
                         cp_row <= cp_row + 12'd1; cp_r <= cp_r + 12'd1;
-                        if (cp_vacc + {12'd0, v_nh} >= {12'd0, v_sh}) begin cp_vacc <= cp_vacc + {12'd0, v_nh} - {12'd0, v_sh}; cp_gy <= cp_gy + 9'd1; end
-                        else cp_vacc <= cp_vacc + {12'd0, v_nh};
                         if (cp_r + 12'd1 == cp_rows) begin
                             if (cp_imode) cp_idone <= 1'b1;
                             else begin
@@ -623,7 +653,7 @@ always @(posedge clk) begin
                                 frame_pend <= 1'b0;    // a frame that began while this one ran late is skipped: its top lines are gone
                             end
                             cst <= C_IDLE;
-                        end else cst <= C_ROW;
+                        end else cst <= cp_imode ? C_ROW : C_GY;
                     end
                 end
             end
@@ -642,8 +672,8 @@ reg   [4:0] rk;                      // record byte being fetched (+1 latency)
 reg   [9:0] rbase;
 reg         rbusy = 1'b0;
 assign      hdr_ra = rbase + {5'd0, rk};
-reg   [6:0] cur_cfg;
-wire  [6:0] cfg = {side_off, layer_off, sel};
+reg   [7:0] cur_cfg;
+wire  [7:0] cfg = {fbf, side_off, layer_off, sel};
 assign      avail = blob_ok;
 reg   [5:0] l_cur, l_end;
 reg   [7:0] n_views;
@@ -774,7 +804,7 @@ always @(posedge clk) begin
     if (vbl_pend && !cp_done1 && fresh) $display("%0d: show buf %0d", dbg_c, l_fb);
     if (rd_go) $display("%0d: reader start off %0d smode %0d", dbg_c, rd_off, rd_smode);
     if (png_img_start && !png_rst) $display("%0d: png %0dx%0d", dbg_c, png_w, png_h);
-    if (dbg_c[23:0] == 24'd0) $display("%0d: qst %0d bst %0d bp %0d,%0d png_rst %0d rd_run %0d r_wv %0d res_in_ready %0d res_valid %0d pm_valid %0d cst %0d", dbg_c, qst, bst, bp_x, bp_y, png_rst, rd_run, r_wv, res_in_ready, res_valid, pm_valid, cst);
+    if (dbg_c[23:0] == 24'd0) $display("%0d: qst %0d bst %0d bp %0d,%0d png_rst %0d rd_run %0d r_wv %0d res_in_ready %0d res_valid %0d pm_valid %0d cst %0d est %0d req %b wait %0d", dbg_c, qst, bst, bp_x, bp_y, png_rst, rd_run, r_wv, res_in_ready, res_valid, pm_valid, cst, est, c_req, ioctl_wait);
 end
 `endif
 

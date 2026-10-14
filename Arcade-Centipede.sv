@@ -526,7 +526,8 @@ wire        art_rd, art_we, art_clk;
 artwork artwork
 (
 	.clk(CLK_48M),
-	.sel(status[49:47]), .layer_off(status[52:50]), .side_off(status[54]), .zoom(status[53]), .avail(art_avail),
+	.sel(status[49:47]), .layer_off(status[52:50]), .side_off(status[54]), .zoom(status[53]),
+	.crt_flip(status[10]), .hdmi_flip(status[9]), .avail(art_avail),
 	.ioctl_download(ioctl_download), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout), .ioctl_wait(art_wait),
 	.ce_pix(ce_pix),
