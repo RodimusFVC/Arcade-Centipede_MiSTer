@@ -15,6 +15,7 @@ Usage:
     gen_mra.py <driver.cpp> <releases_dir> [set ...]      (no sets: every supported set)
 """
 import copy
+import xml.etree.ElementTree as ET
 import re
 import sys
 from pathlib import Path
@@ -60,9 +61,11 @@ CLK_PER_FRAME = 384 * 8 * 263                                     # Centipede bo
 # MAME artwork (rtl/art/artwork.sv): set -> games/mame-artwork/<zip>, used as-is. The MRA sends a 1024-byte layout
 # table (from the zip's default.lay) then each PNG behind an "AWI"+id marker on ioctl index 5. The OSD Artwork page
 # picks the view (View n = the n-th view of default.lay, listed in the MRA) and MAME's layer toggles.
-ARTWORK = {"warlords": "warlords", "ccastles": "ccastles"}
+ARTWORK = {"warlords": "warlords", "ccastles": "ccastles", "centiped": "centiped", "milliped": "milliped"}
 ART_DIR = Path(__file__).resolve().parent.parent / "games" / "mame-artwork"
 ART_SCREEN_W = 512          # canvas pixels across the game screen (HDMI framebuffer); 2x native fits the DDR budget
+ART_SCREEN_H = 512          # vertical games: canvas pixels down the (portrait) screen, same per-frame load as 512 across
+ART_ROT = {"ROT0": 0, "ROT270": 1, "ROT90": 2}   # layout table byte 10
 ART_NATIVE = (256, 240)     # game pixels (MAME visarea) = the native composite plane
 ART_NATIVE_BY = {"ccastles": (256, 232)}     # boards whose visarea differs (ccastles: sync PROM vblank, lines 24-255)
 
@@ -396,10 +399,14 @@ def parse_hiscores(path):
 HISCORES = parse_hiscores(HISCORE_DAT) if HISCORE_DAT.exists() else {}
 
 
-def art_table(zipname):
-    """MAME default.lay -> (1024-byte table, [png names], [view names]); see rtl/art/artwork.sv for the format."""
-    import struct, zipfile, copy
-    import xml.etree.ElementTree as ET
+def art_table(zipname, rot="ROT0"):
+    """MAME default.lay -> (1024-byte table, [png names], [view names]); see rtl/art/artwork.sv for the format.
+    rot = the set's orientation: the layout is in screen orientation (portrait for ROT90 / ROT270), the core's
+    picture is the unrotated raster (ART_NATIVE). Views keep the screen and canvas on even pixels both
+    ways, so the core can also draw them turned 90 (OSD Orientation Horz).
+    Layer record: op, image (rect: R), flags, colour alpha, X, Y, W, H, X2 (rect: G, B), W2.
+    Flags: [0] flipx, [1] alpha from mask, [3:2] kind (OSD toggle), [4] bezel-off rect, [5] side art, [6] rect."""
+    import struct, zipfile
     z = zipfile.ZipFile(ART_DIR / f"{zipname}.zip")
     native = ART_NATIVE_BY.get(zipname, ART_NATIVE)
     lay = ET.fromstring(z.read("default.lay"))
@@ -408,26 +415,46 @@ def art_table(zipname):
         d = z.read(name)
         return struct.unpack(">II", d[16:24])
 
-    elems = {}
-    for e in lay.findall("element"):
-        imgs = e.findall("image")
-        defstate = e.get("defstate", "0")
-        pick = [i for i in imgs if i.get("state", defstate) == defstate] or imgs
-        if len(imgs) == 0 or len(list(e)) != len(imgs):
-            print(f"artwork {zipname}: element {e.get('name')} is not a plain image, skipped")
-            continue
-        elems[e.get("name")] = (pick[0].get("file"), pick[0].get("alphafile"))
+    def rgba(c):
+        return [float(c.get(k, "1")) if c is not None else 1.0 for k in ("red", "green", "blue", "alpha")]
 
-    def bounds(n):
-        b = n.find("bounds")
+    def _bounds(e):
+        b = e.find("bounds")
         if b is None:
             return None
         if b.get("left") is not None:
-            l, t, r, bt = (float(b.get(k)) for k in ("left", "top", "right", "bottom"))
-            return l, t, r - l, bt - t
-        return tuple(float(b.get(k, "0")) for k in ("x", "y", "width", "height"))
+            return tuple(float(b.get(k)) for k in ("left", "top", "right", "bottom"))
+        x, y = float(b.get("x", "0")), float(b.get("y", "0"))
+        return x, y, x + float(b.get("width")), y + float(b.get("height"))
+
+    def bounds(n):
+        b = _bounds(n)
+        return None if b is None else (b[0], b[1], b[2] - b[0], b[3] - b[1])
+
+    # element -> ("img", file, alphafile) | ("rects", [(x0, y0, x1, y1 in element units 0-1, rgba)])
+    elems = {}
+    for e in lay.findall("element"):
+        name, kids = e.get("name"), list(e)
+        imgs = [k for k in kids if k.tag == "image"]
+        rects = [k for k in kids if k.tag == "rect"]
+        if imgs and len(imgs) == len(kids):
+            defstate = e.get("defstate", "0")
+            pick = [i for i in imgs if i.get("state", defstate) == defstate]
+            if not pick:                  # a lamp: no image in its default state (outputs are not driven yet)
+                print(f"artwork {zipname}: element {name} has no image for state {defstate}, skipped")
+                continue
+            elems[name] = ("img", pick[0].get("file"), pick[0].get("alphafile"))
+        elif rects and len(rects) == len(kids):
+            ib = [_bounds(r) or (0.0, 0.0, 1.0, 1.0) for r in rects]     # MAME default: the unit square
+            ix0, iy0 = min(b[0] for b in ib), min(b[1] for b in ib)
+            ix1, iy1 = max(b[2] for b in ib), max(b[3] for b in ib)
+            elems[name] = ("rects", [((b[0] - ix0) / (ix1 - ix0), (b[1] - iy0) / (iy1 - iy0), (b[2] - ix0) / (ix1 - ix0),
+                                      (b[3] - iy0) / (iy1 - iy0), rgba(r.find("color"))) for r, b in zip(rects, ib)])
+        else:
+            print(f"artwork {zipname}: element {name} is not plain images or rects, skipped")
 
     images, views, layers = [], [], []
+
     def img_id(name):
         if name not in images:
             images.append(name)
@@ -435,6 +462,7 @@ def art_table(zipname):
 
     OP_MUL, OP_ADD, OP_ALPHA, OP_UNDER, OP_MASK = 0, 1, 2, 3, 4
     groups = {g.get("name"): g for g in lay.findall("group")}
+
     def flatten(node):
         # <group ref>: the group's items mapped from its bounds (or the union of its items) into the reference's bounds
         out = []
@@ -474,13 +502,17 @@ def art_table(zipname):
             x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
             vb = (x0, y0, max(b[0] + b[2] for b in bs) - x0, max(b[1] + b[3] for b in bs) - y0)
         sb = bounds(items["screen"][0])
-        sc = ART_SCREEN_W / sb[2]
+        vert = rot != "ROT0"
+        sc = ART_SCREEN_H / sb[3] if vert else ART_SCREEN_W / sb[2]
         cw, ch = (round(vb[2] * sc) + 1) & ~1, round(vb[3] * sc)
         ox = round((sb[0] - vb[0]) * sc) & 1        # shift the view so the screen starts on an even pixel
+        oy = round((sb[1] - vb[1]) * sc) & 1        # and an even row (the view turned 90)
         sx = round((sb[0] - vb[0]) * sc) - ox
-        sy = round((sb[1] - vb[1]) * sc)
-        sw, sh = ART_SCREEN_W, round(sb[3] * sc)
-        assert cw <= 2048 and ch <= 2048 and sw >= native[0] and sh >= native[1], v.get("name")
+        sy = round((sb[1] - vb[1]) * sc) - oy
+        sw, sh = (round(sb[2] * sc / 2) * 2, ART_SCREEN_H) if vert else (ART_SCREEN_W, round(sb[3] * sc / 2) * 2)
+        ch = (ch + 1) & ~1
+        gw, gh = native[::-1] if vert else native        # game picture as the layout shows it
+        assert cw <= 2048 and ch <= 2048 and sw >= gw and sh >= gh, v.get("name")
         if items["overlay"] or len(items["backdrop"]) <= 1:
             order = [(OP_MUL, "overlay"), (OP_ADD, "backdrop"), (OP_ALPHA, "bezel"), (OP_ALPHA, "cpanel"), (OP_ALPHA, "marquee")]
         else:
@@ -491,22 +523,37 @@ def art_table(zipname):
             for it in items[kind]:
                 if it.get("element") not in elems:
                     continue
-                f, af = elems[it.get("element")]
+                el = elems[it.get("element")]
                 b = bounds(it)
-                x = round((b[0] - vb[0]) * sc); y = round((b[1] - vb[1]) * sc)
-                w = round((b[0] + b[2] - vb[0]) * sc) - x; h = round((b[1] + b[3] - vb[1]) * sc) - y
-                x -= ox
-                col = it.find("color")
-                ca = round(255 * float(col.get("alpha", "1"))) if col is not None else 255
+                col = rgba(it.find("color"))
                 o = it.find("orientation")
                 flipx = o is not None and o.get("flipx") == "yes"
                 if o is not None and (o.get("rotate", "0") != "0" or o.get("flipy") == "yes"):
-                    print(f"artwork {zipname}: {f} rotate / flipy not supported, drawn unrotated")
+                    print(f"artwork {zipname}: {it.get('element')} rotate / flipy not supported, drawn unrotated")
+
+                def place(x0, y0, x1, y1):
+                    x = round((x0 - vb[0]) * sc); y = round((y0 - vb[1]) * sc)
+                    return x - ox, y - oy, round((x1 - vb[0]) * sc) - x, round((y1 - vb[1]) * sc) - y
+
+                k = KIND[kind] << 2
+                if el[0] == "rects":      # one solid-colour layer per rect, item colour x rect colour
+                    for rx0, ry0, rx1, ry1, rc in el[1]:
+                        x, y, w, h = place(b[0] + rx0 * b[2], b[1] + ry0 * b[3], b[0] + rx1 * b[2], b[1] + ry1 * b[3])
+                        if w <= 0 or h <= 0:
+                            continue
+                        r, gr, bl, a = (round(255 * rc[i] * col[i]) for i in range(4))
+                        side = kind != "bezel" and (x + w <= sx or x >= sx + sw)
+                        layers.append((op, r, 64 | k | (32 if side else 0), a, x, y, w, h, gr | bl << 8, 0))
+                    continue
+                if col[:3] != [1.0] * 3:
+                    print(f"artwork {zipname}: {it.get('element')} colour tint not supported, drawn untinted")
+                _, f, af = el
+                x, y, w, h = place(b[0], b[1], b[0] + b[2], b[1] + b[3])
+                ca = round(255 * col[3])
                 assert w <= 2048, f
                 for name in [n for n in (af, f) if n]:
                     pw, ph = png_size(name)
                     assert pw <= 15 * w and ph <= 15 * h, f"{name}: downscale factor over 15"
-                k = KIND[kind] << 2
                 # side art beside the screen and taller than it: with bezels off it is scaled to the screen's height
                 # (flag bit 4, alternate x / width; y / height = the screen's), so the game can fill the display
                 alt, x2, w2 = 0, 0, 0
@@ -524,18 +571,18 @@ def art_table(zipname):
                     layers.append((OP_MASK, img_id(af), k | alt, 255, x, y, w, h, x2, w2))
                 layers.append((op, img_id(f), (1 if flipx else 0) | (2 if af else 0) | k | alt, ca, x, y, w, h, x2, w2))
         views.append((v.get("name"), (cw, ch, sx, sy, sw, sh, first, len(layers) - first)))
-    assert len(views) <= 7 and len(layers) <= 48 and len(images) <= 32
+    assert len(views) <= 7 and len(layers) <= 48 and len(images) <= 32, (len(views), len(layers), len(images))
     t = bytearray(1024)
-    struct.pack_into("<2sHHHH", t, 0, b"AW", len(views), len(images), *native)
+    struct.pack_into("<2sHHHHB", t, 0, b"AW", len(views), len(images), *native, ART_ROT[rot])
     for i, (_, rec) in enumerate(views):
         struct.pack_into("<8H", t, 16 + 16 * i, *rec)
     for i, (op, img, fl, ca, x, y, w, h, x2, w2) in enumerate(layers):
-        struct.pack_into("<BBBBhhHHhH", t, 256 + 16 * i, op, img, fl, ca, x, y, w, h, x2, w2)
+        struct.pack_into("<BBBBhhHHHH" if fl & 64 else "<BBBBhhHHhH", t, 256 + 16 * i, op, img, fl, ca, x, y, w, h, x2, w2)
     return bytes(t), images, [n for n, _ in views]
 
 
-def art_xml(zipname):
-    table, images, views = art_table(zipname)
+def art_xml(zipname, rot):
+    table, images, views = art_table(zipname, rot)
     names = ", ".join(f"View {i + 1} = {n.replace('_', ' ')}" for i, n in enumerate(views))
     rows = "\n".join("            " + " ".join(f"{b:02X}" for b in table[i:i + 32]) for i in range(0, 1024, 32))
     parts = "\n".join(f'        <part>41 57 49 {i:02X}</part>\n        <part name="{n}"/>' for i, n in enumerate(images))
@@ -662,7 +709,7 @@ def mra(g, games, segs, build_inputs):
 {cfg_rows}
         </part>
     </rom>
-{save_xml(g, cfg)}{art_xml(art) if art else ""}
+{save_xml(g, cfg)}{art_xml(art, g["rot"]) if art else ""}
     <remark>{remark(g)}</remark>
     <mratimestamp>20261012000000</mratimestamp>
 </misterromdescription>

@@ -56,7 +56,6 @@ reg  [8:0] cnt  [3][16];                // t = 0 code-length, 1 litlen, 2 distan
 reg [15:0] first[3][16];
 reg  [8:0] base [3][16];
 reg  [8:0] offs [16];
-reg  [8:0] sym_ll[288];
 reg  [4:0] sym_d [32];
 reg  [4:0] sym_cl[19];
 
@@ -105,7 +104,7 @@ endfunction
 localparam S_HDR = 5'd0, S_ALIGN = 5'd1, S_SLEN = 5'd2, S_SNLEN = 5'd3, S_SCOPY = 5'd4, S_FIXED = 5'd5,
            S_DHDR = 5'd6, S_CLL = 5'd7, S_BUILD = 5'd8, S_LENS = 5'd9, S_REP = 5'd10, S_MOVE = 5'd11,
            S_SYM = 5'd12, S_LEXT = 5'd13, S_DSYM = 5'd14, S_DEXT = 5'd15, S_COPY = 5'd16, S_COPY2 = 5'd17,
-           S_DONE = 5'd18;
+           S_DONE = 5'd18, S_SYM2 = 5'd19;
 
 reg   [4:0] st = S_HDR;
 reg         bfinal = 1'b0;
@@ -133,7 +132,17 @@ wire  [3:0] clen_n = clen + 4'd1;
 wire [15:0] rel    = code_n - first[bt][clen_n];
 wire        hit    = rel < {7'd0, cnt[bt][clen_n]};
 wire  [8:0] hidx   = base[bt][clen_n] + rel[8:0];
-wire  [8:0] hsym   = (bt == 2'd0) ? {4'd0, sym_cl[hidx[4:0]]} : (bt == 2'd1) ? sym_ll[hidx] : {4'd0, sym_d[hidx[4:0]]};
+wire  [8:0] hsym   = (bt == 2'd0) ? {4'd0, sym_cl[hidx[4:0]]} : {4'd0, sym_d[hidx[4:0]]};   // code-length / distance
+// litlen symbols in block RAM (as registers ~2K ALMs): addressed by hidx on the hit clock, used in S_SYM2
+wire  [8:0] ll_q;
+reg   [8:0] ll_wa, ll_wd;
+reg         ll_we = 1'b0;
+reg   [8:0] hidx_q;                    // held while S_SYM2 waits
+dpram_dc #(.widthad_a(9), .width_a(9)) sym_ll
+(
+    .clock_a(clk), .address_a(ll_wa), .data_a(ll_wd), .wren_a(ll_we), .q_a(),
+    .clock_b(clk), .address_b(st == S_SYM2 ? hidx_q : hidx), .q_b(ll_q)
+);
 
 wire  [8:0] nsym   = (bt == 2'd0) ? 9'd19 : (bt == 2'd1) ? hlit : {3'd0, hdist};
 wire  [3:0] blen   = (bt == 2'd0) ? {1'b0, cl_lens[idx[4:0]]} : (bt == 2'd1) ? lens[idx] : lens[9'd288 + idx];
@@ -141,9 +150,9 @@ wire  [3:0] blen   = (bt == 2'd0) ? {1'b0, cl_lens[idx[4:0]]} : (bt == 2'd1) ? l
 wire        out_free = !out_valid || out_ready;
 wire  [7:0] win_q;
 wire        win_we = (st == S_SCOPY && slen != 16'd0 && bitcnt >= 6'd8 && out_free) ||
-                     (st == S_SYM && out_free && bitcnt != 6'd0 && hit && hsym < 9'd256) ||
+                     (st == S_SYM2 && out_free && ll_q < 9'd256) ||
                      (st == S_COPY2);
-wire  [7:0] win_d  = (st == S_SCOPY) ? bitbuf[7:0] : (st == S_SYM) ? hsym[7:0] : win_q;
+wire  [7:0] win_d  = (st == S_SCOPY) ? bitbuf[7:0] : (st == S_SYM2) ? ll_q[7:0] : win_q;
 
 dpram_dc #(.widthad_a(15)) window
 (
@@ -169,6 +178,7 @@ always @* begin
 end
 
 always @(posedge clk) begin
+    ll_we <= 1'b0;
     if (out_valid && out_ready) out_valid <= 1'b0;
     if (win_we) wptr <= wptr + 15'd1;
     if (reset) begin
@@ -224,7 +234,7 @@ always @(posedge clk) begin
                     if (idx < nsym) begin
                         if (blen != 4'd0) begin
                             if (bt == 2'd0)      sym_cl[offs[blen][4:0]] <= idx[4:0];
-                            else if (bt == 2'd1) sym_ll[offs[blen]] <= idx;
+                            else if (bt == 2'd1) begin ll_wa <= offs[blen]; ll_wd <= idx; ll_we <= 1'b1; end
                             else                 sym_d[offs[blen][4:0]] <= idx[4:0];
                             offs[blen] <= offs[blen] + 9'd1;
                         end
@@ -262,16 +272,17 @@ always @(posedge clk) begin
                 bt <= 2'd1; idx <= 9'd0; bphase <= 2'd0; st <= S_BUILD;
             end
         S_SYM: if (bitcnt != 6'd0 && out_free) begin
-            if (hit) begin
-                code <= 16'd0; clen <= 4'd0;
-                if (hsym < 9'd256) begin out_data <= hsym[7:0]; out_valid <= 1'b1; end
-                else if (hsym == 9'd256) st <= bfinal ? S_DONE : S_HDR;
-                else begin
-                    mlen  <= len_base(5'(hsym - 9'd257));
-                    xbits <= len_extra(5'(hsym - 9'd257));
-                    st    <= S_LEXT;
-                end
-            end else begin code <= code_n; clen <= clen_n; end
+            if (hit) begin code <= 16'd0; clen <= 4'd0; hidx_q <= hidx; st <= S_SYM2; end   // symbol readable next clock
+            else begin code <= code_n; clen <= clen_n; end
+        end
+        S_SYM2: if (out_free) begin
+            if (ll_q < 9'd256) begin out_data <= ll_q[7:0]; out_valid <= 1'b1; st <= S_SYM; end
+            else if (ll_q == 9'd256) st <= bfinal ? S_DONE : S_HDR;
+            else begin
+                mlen  <= len_base(5'(ll_q - 9'd257));
+                xbits <= len_extra(5'(ll_q - 9'd257));
+                st    <= S_LEXT;
+            end
         end
         S_LEXT: if (xbits == 5'd0 || bitcnt >= {1'b0, xbits}) begin
             if (xbits != 5'd0) mlen <= mlen + (9'(bitbuf[4:0]) & ((9'd1 << xbits) - 9'd1));

@@ -523,11 +523,11 @@ wire  [7:0] art_burstcnt, art_be;
 wire [28:0] art_addr;
 wire [63:0] art_din;
 wire        art_rd, art_we, art_clk;
-artwork artwork
+artwork #(.IDX(8'd5)) artwork
 (
 	.clk(CLK_48M),
-	.sel(status[49:47]), .layer_off(status[52:50]), .side_off(status[54]), .zoom(status[53]),
-	.crt_flip(status[10]), .hdmi_flip(status[9]), .avail(art_avail),
+	.sel({1'b0, status[49:47]}), .layer_off(status[52:50]), .side_off(status[54]), .zoom(status[53]),
+	.crt_flip(status[10]), .hdmi_flip(status[9]), .turn(status[8]), .avail(art_avail),
 	.ioctl_download(ioctl_download), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout), .ioctl_wait(art_wait),
 	.ce_pix(ce_pix),
@@ -539,6 +539,7 @@ artwork artwork
 	.DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(art_rd),
 	.DDRAM_DIN(art_din), .DDRAM_BE(art_be), .DDRAM_WE(art_we)
 );
+// Orientation Horz (rotated monitor): the artwork turns its own view, so it keeps the framebuffer
 assign art_fb = art_run & ~direct_video;
 assign audio = v_cc ? k_audio : c_audio;
 

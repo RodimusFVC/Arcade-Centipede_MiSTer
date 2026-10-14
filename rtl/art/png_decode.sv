@@ -5,7 +5,7 @@
 //
 //  Takes one or more PNG files back to back and emits each image's pixels in raster order as RGBA with x / y.
 //  Chunks: IHDR, PLTE, tRNS, IDAT (zlib -> inflate.sv), IEND; everything else is skipped (CRCs are not checked).
-//  Scanlines are unfiltered (None / Sub / Up / Average / Paeth) against a 16K previous-line buffer.
+//  Scanlines are unfiltered (None / Sub / Up / Average / Paeth) against a 32K previous-line buffer.
 //
 //  Redistribution and use in source and synthesized forms, with or without modification, are permitted
 //  provided that the above copyright notice is retained. THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY.
@@ -53,9 +53,12 @@ wire        idat_byte = pst == P_DATA && ctype_ch == T_IDAT && zskip == 2'd0;
 assign      in_ready  = idat_byte ? (inf_in_ready || inf_done) : 1'b1;
 wire        acc = in_valid && in_ready;
 
-// palette (RGB) and its tRNS alpha
-reg  [23:0] pal[256];
-reg   [7:0] pal_a[256];
+// palette (RGB) and its tRNS alpha, in block RAM (as registers they cost ~4K ALMs)
+wire [23:0] pal_q;
+wire  [7:0] pal_aq;
+reg  [23:0] pal_wd;
+reg   [7:0] pal_wa;
+reg         pal_we = 1'b0, pal_awe = 1'b0;
 reg   [8:0] trns_n = 9'd0;               // tRNS entries given; palette entries past them are opaque
 reg   [7:0] pal_i = 8'd0;
 reg   [1:0] pal_c = 2'd0;
@@ -64,6 +67,8 @@ reg  [15:0] pal_r = 16'd0;              // first two components of the entry bei
 always @(posedge clk) begin
     inf_rst   <= 1'b0;
     img_start <= 1'b0;
+    pal_we    <= 1'b0;
+    pal_awe   <= 1'b0;
     if (reset) begin pst <= P_SIG; bcnt <= 4'd0; inf_rst <= 1'b1; end
     else if (acc) case (pst)
         P_SIG: begin bcnt <= bcnt + 4'd1; if (bcnt == 4'd7) begin pst <= P_LEN; bcnt <= 4'd0; end end
@@ -102,10 +107,10 @@ always @(posedge clk) begin
                     default: ;
                 endcase
                 T_PLTE: begin
-                    if (pal_c == 2'd2) begin pal[pal_i] <= {pal_r, in_data}; pal_i <= pal_i + 8'd1; pal_c <= 2'd0; end
+                    if (pal_c == 2'd2) begin pal_wd <= {pal_r, in_data}; pal_wa <= pal_i; pal_we <= 1'b1; pal_i <= pal_i + 8'd1; pal_c <= 2'd0; end
                     else begin pal_r <= {pal_r[7:0], in_data}; pal_c <= pal_c + 2'd1; end
                 end
-                T_TRNS: if (ctype == 8'd3) begin pal_a[pal_i] <= in_data; pal_i <= pal_i + 8'd1; trns_n <= trns_n + 9'd1; end
+                T_TRNS: if (ctype == 8'd3) begin pal_wd[7:0] <= in_data; pal_wa <= pal_i; pal_awe <= 1'b1; pal_i <= pal_i + 8'd1; trns_n <= trns_n + 9'd1; end
                 T_IDAT: if (zskip != 2'd0) zskip <= zskip - 2'd1;
                 default: ;
             endcase
@@ -139,14 +144,14 @@ inflate inf
 wire  [2:0] bpp    = (ctype == 8'd2) ? 3'd3 : (ctype == 8'd6) ? 3'd4 : (ctype == 8'd4) ? 3'd2 : 3'd1;
 wire [15:0] stride = (bpp == 3'd3) ? width * 16'd3 : width << (bpp == 3'd4 ? 2 : bpp == 3'd2 ? 1 : 0);
 
-reg  [13:0] lb_addr = 14'd0;
+reg  [14:0] lb_addr = 15'd0;
 reg   [7:0] lb_d = 8'd0;
 reg         lb_we = 1'b0;
 wire  [7:0] lb_q;
-dpram_dc #(.widthad_a(14)) prev_line
+dpram_dc #(.widthad_a(15)) prev_line
 (
     .clock_a(clk), .address_a(lb_addr), .data_a(lb_d), .wren_a(lb_we), .q_a(lb_q),
-    .clock_b(clk), .address_b(14'd0), .q_b()
+    .clock_b(clk), .address_b(15'd0), .q_b()
 );
 
 localparam U_FILT = 2'd0, U_RD = 2'd1, U_CALC = 2'd2, U_EMIT = 2'd3;
@@ -173,6 +178,19 @@ wire  [8:0] avg   = ({1'b0, fa} + {1'b0, fb}) >> 1;
 wire  [7:0] pred  = (filt == 3'd1) ? fa : (filt == 3'd2) ? fb : (filt == 3'd3) ? avg[7:0] : (filt == 3'd4) ? paeth : 8'd0;
 wire  [7:0] recon = inf_out + pred;
 
+// palette read: the index is recon on the clock pal_pend is set, so the entry is on pal_q while pal_pend
+wire  [7:0] pal_ra = pal_pend ? pal_idx : recon;
+dpram_dc #(.widthad_a(8), .width_a(24)) pal_rgb
+(
+    .clock_a(clk), .address_a(pal_wa), .data_a(pal_wd), .wren_a(pal_we), .q_a(),
+    .clock_b(clk), .address_b(pal_ra), .q_b(pal_q)
+);
+dpram_dc #(.widthad_a(8), .width_a(8)) pal_alpha
+(
+    .clock_a(clk), .address_a(pal_wa), .data_a(pal_wd[7:0]), .wren_a(pal_awe), .q_a(),
+    .clock_b(clk), .address_b(pal_ra), .q_b(pal_aq)
+);
+
 always @* inf_out_ready = (ust == U_FILT) || (ust == U_CALC && !px_valid_hold && !pal_pend);
 
 reg px_valid_hold;
@@ -185,12 +203,12 @@ always @(posedge clk) begin
     if (img_start) begin ust <= U_FILT; row <= 16'd0; bx <= 16'd0; pb <= 3'd0; end
     // palette lookup finishing (one clock after the index)
     if (pal_pend) begin
-        px_rgba  <= {pal[pal_idx], ({1'b0, pal_idx} < trns_n) ? pal_a[pal_idx] : 8'hFF};
+        px_rgba  <= {pal_q, ({1'b0, pal_idx} < trns_n) ? pal_aq : 8'hFF};
         px_valid <= 1'b1;
         pal_pend <= 1'b0;
     end
     case (ust)
-        U_FILT: if (inf_out_valid) begin filt <= inf_out[2:0]; bx <= 16'd0; pb <= 3'd0; pxc <= 16'd0; lb_addr <= 14'd0; ust <= U_RD; end
+        U_FILT: if (inf_out_valid) begin filt <= inf_out[2:0]; bx <= 16'd0; pb <= 3'd0; pxc <= 16'd0; lb_addr <= 15'd0; ust <= U_RD; end
         U_RD:   ust <= U_CALC;                      // prior-line byte bx readable next clock
         U_CALC: if (inf_out_valid && !px_valid_hold && !pal_pend) begin
             lb_d  <= recon; lb_we <= 1'b1;          // overwrite the prior line in place
@@ -218,7 +236,7 @@ always @(posedge clk) begin
                 ust <= U_EMIT;
             end
         end
-        U_EMIT: begin lb_addr <= bx[13:0]; ust <= U_RD; end   // address the next prior-line byte
+        U_EMIT: begin lb_addr <= bx[14:0]; ust <= U_RD; end   // address the next prior-line byte
         default: ;
     endcase
 end

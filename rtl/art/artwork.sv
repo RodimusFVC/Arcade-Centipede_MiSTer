@@ -3,14 +3,19 @@
 //  MAME artwork (backdrop / overlay / bezel) for MiSTer arcade cores
 //  Copyright (C) 2026 Rodimus
 //
-//  ioctl index 5 = [1024-byte layout table from gen_mra][marker "AWI"+id][PNG]... (PNGs straight from the
+//  ioctl index IDX = [1024-byte layout table from gen_mra][marker "AWI"+id][PNG]... (PNGs straight from the
 //  MAME artwork zip). The PNGs are stored in DDR3, then the selected view is decoded (png_decode), scaled
 //  (art_resample) and blended in MAME's legacy layer order into a canvas plane S of {Q, M} words:
 //  final pixel = clamp(Q + game * M / 255) (Q = everything added on top, M = overlay / bezel factor).
 //  HDMI: S + the game -> triple-buffered 32bpp framebuffer (canvas size). Analog / direct video: S
 //  resampled to the native resolution (plane N), applied to the game pixel by pixel (one pixel of delay).
+//  Rotated games (table byte 10): the layout is portrait; the whole game frame is captured (5-bit colour codes) and
+//  composited by address; plane N is built from S read column by column, so it stays in the native raster.
+//  Turned view (turn = OSD Orientation Horz, rotated monitor): the whole view is turned 90 so it stands upright on the
+//  monitor (vertical game: the game picture is then the native raster; horizontal game: turned CW, drawn as a rotated
+//  game). Layers are blended transposed into S; the rest of the pipeline is unchanged.
 //
-//  DDR3 (byte addresses): blob 30000000, S 31000000 (2048 words / row), FB 33000000 / 34000000 / 35000000
+//  DDR3 (byte addresses): blob 38000000 (32 MB), S 31000000 (2048 words / row), FB 33000000 / 34000000 / 35000000
 //  (8192 bytes / row), N 36000000 (512 words / row).
 //
 //  Redistribution and use in source and synthesized forms, with or without modification, are permitted
@@ -18,15 +23,16 @@
 //
 //============================================================================
 
-module artwork
+module artwork #(parameter [7:0] IDX = 8'd5)   // ioctl index of the artwork download
 (
     input             clk,
-    input       [2:0] sel,             // 0 = off, n = view n of the layout table
+    input       [3:0] sel,             // 0 = off, n = view n of the layout table
     input       [2:0] layer_off,       // [0] backdrops, [1] overlays, [2] bezels (MAME's layer toggles)
     input             side_off,        // layers beside the screen (side art) off
     input             zoom,            // framebuffer shows the screen area only
     input             crt_flip,        // board picture is rotated 180 (CRT Flip): artwork follows on the core video
     input             hdmi_flip,       // HDMI Flip; the framebuffer is rotated 180 when crt_flip ^ hdmi_flip
+    input             turn,            // rotated monitor (OSD Orientation Horz): the view is turned 90
     output            avail,           // this game has artwork
 
     input             ioctl_download,
@@ -63,7 +69,7 @@ module artwork
     output            DDRAM_WE
 );
 
-localparam [28:0] BLOB_W = 29'h06000000;      // word addresses (byte >> 3)
+localparam [28:0] BLOB_W = 29'h07000000;      // word addresses (byte >> 3); 38000000-39FFFFFF is unused by Main_MiSTer
 localparam [28:0] S_W    = 29'h06200000;
 localparam [28:0] FB0_W  = 29'h06600000;
 localparam [28:0] N_W    = 29'h06C00000;
@@ -135,12 +141,12 @@ wire [4:0] e_wr = (est == E_WDATA || est == E_WPRIME) ? (5'd1 << ecur) : 5'd0;
 
 // =================================================================== download: layout table + PNG blob
 
-wire        dl5    = ioctl_download && ioctl_index == 8'd5;
+wire        dl5    = ioctl_download && ioctl_index == IDX;
 reg         old_dl5 = 1'b0;
 reg         blob_ok = 1'b0;
-wire        hdr_wr = ioctl_wr && ioctl_index == 8'd5 && ioctl_addr < 25'd1024;
-wire        blb_wr = ioctl_wr && ioctl_index == 8'd5 && ioctl_addr >= 25'd1024;
-wire [23:0] boff   = 24'(ioctl_addr - 25'd1024);
+wire        hdr_wr = ioctl_wr && ioctl_index == IDX && ioctl_addr < 25'd1024;
+wire        blb_wr = ioctl_wr && ioctl_index == IDX && ioctl_addr >= 25'd1024;
+wire [24:0] boff   = 25'(ioctl_addr - 25'd1024);
 
 wire  [9:0] hdr_ra;
 wire  [7:0] hdr_q;
@@ -151,7 +157,7 @@ dpram_dc #(.widthad_a(10)) hdr
 );
 
 reg  [63:0] bw_acc, bw_word;
-reg  [23:0] bw_last;
+reg  [24:0] bw_last;
 reg         bw_dirty = 1'b0;
 assign      w_wdata = bw_word;
 assign      ioctl_wait = w_req;
@@ -162,7 +168,7 @@ reg   [2:0] kst = K_MARK;
 reg   [1:0] kcnt;
 reg  [31:0] klen, ktype;
 reg   [4:0] kid;
-reg  [23:0] img_off[32];
+reg  [24:0] img_off[32];
 reg  [31:0] img_ok = 32'd0;
 
 always @(posedge clk) begin
@@ -176,7 +182,7 @@ always @(posedge clk) begin
         bw_last <= boff;
         if (boff[2:0] == 3'd7) begin
             bw_word <= {ioctl_dout, bw_acc[55:0]};
-            w_addr <= BLOB_W + {8'd0, boff[23:3]}; w_req <= 1'b1;
+            w_addr <= BLOB_W + {7'd0, boff[24:3]}; w_req <= 1'b1;
             bw_dirty <= 1'b0;
         end
         // scanner
@@ -199,7 +205,7 @@ always @(posedge clk) begin
         blob_ok <= 1'b1;
         if (bw_dirty) begin   // last partial word
             bw_word <= bw_acc;
-            w_addr <= BLOB_W + {8'd0, bw_last[23:3]}; w_req <= 1'b1;
+            w_addr <= BLOB_W + {7'd0, bw_last[24:3]}; w_req <= 1'b1;
             bw_dirty <= 1'b0;
         end
     end
@@ -210,7 +216,7 @@ end
 reg         rd_go = 1'b0;           // one clock: start
 reg         rd_smode;               // 0 = PNG bytes from rd_off, 1 = S rect rows (Q or M by rd_mq)
 reg         rd_mq;
-reg  [23:0] rd_off;
+reg  [24:0] rd_off;
 reg         rd_run = 1'b0, rd_stop = 1'b0;
 reg   [5:0] r_wp, r_rp, r_ip;       // written / read / issued (32-entry ring, 6-bit pointers)
 reg   [5:0] r_base;
@@ -225,7 +231,20 @@ dpram_dc #(.widthad_a(5), .width_a(64)) rring
     .clock_b(clk), .address_b(ring_ra), .q_b(ring_q)
 );
 
-reg  [11:0] v_cw, v_ch, v_sx, v_sy, v_sw, v_sh, v_nw, v_nh;   // view geometry
+reg  [11:0] v_cw, v_ch, v_sx, v_sy, v_sw, v_sh, v_nw, v_nh;   // view geometry (as drawn: after view rotation)
+reg  [11:0] u_cw, u_ch, u_sx, u_sy, u_sw, u_sh;               // view geometry from the table (layers are placed in it)
+reg   [1:0] v_rot = 2'd0;          // game orientation: 0 none, 1 ROT270, 2 ROT90 (table byte 10, or the view rotation)
+reg   [1:0] vw_rot = 2'd0;         // view rotation in use: 0 none, 1 CCW, 2 CW
+wire        rot   = v_rot != 2'd0;
+wire        rot90 = v_rot == 2'd2;
+wire [11:0] v_gw  = rot ? v_nh : v_nw;   // game picture as the layout shows it (rotated: portrait)
+wire [11:0] v_gh  = rot ? v_nw : v_nh;
+// S mode reads the screen rect row by row; a rotated game reads it column by column (plane N is unrotated)
+wire [11:0] rv_w    = rot ? v_sh : v_sw;
+wire [11:0] rv_h    = rot ? v_sw : v_sh;
+wire [11:0] rs_row  = !rot ? r_row : rot90 ? r_col : 12'(v_sh - 12'd1 - r_col);
+wire [11:0] rs_col  = !rot ? r_col : rot90 ? 12'(v_sw - 12'd1 - r_row) : r_row;
+wire [28:0] rs_addr = S_W + {6'd0, 12'(v_sy + rs_row), 11'd0} + {17'd0, 12'(v_sx + rs_col)};
 reg  [63:0] r_word;
 reg         r_wv = 1'b0, r_pend = 1'b0;
 reg   [2:0] r_bi;
@@ -245,23 +264,19 @@ always @(posedge clk) begin
     if (rd_go) begin
         rd_run <= 1'b1;
         r_wp <= 6'd0; r_rp <= 6'd0; r_ip <= 6'd0; r_wv <= 1'b0; r_pend <= 1'b0; r_first <= 1'b1;
-        r_addr <= rd_smode ? S_W + {6'd0, v_sy, 11'd0} + {17'd0, v_sx} : BLOB_W + {8'd0, rd_off[23:3]};
+        r_addr <= BLOB_W + {7'd0, rd_off[24:3]};
         r_col <= 12'd0; r_row <= 12'd0;
         r_bi <= rd_smode ? 3'd0 : rd_off[2:0];
     end
     else if (rd_run) begin
-        // request 16 words (S mode: up to the end of the row) while the ring has room
-        if (!r_req && !rd_stop && !e_wr[4] && 6'(r_ip - r_rp) <= 6'd16 && !(rd_smode && r_row == v_sh)) begin
-            r_n = (rd_smode && v_sw - r_col < 12'd16) ? 5'(v_sw - r_col) : 5'd16;
-            r_addr_q <= r_addr; r_len <= {3'd0, r_n}; r_req <= 1'b1;
+        // request 16 words (S mode: up to the end of the row; rotated: one word, the walk goes down a column)
+        if (!r_req && !rd_stop && !e_wr[4] && 6'(r_ip - r_rp) <= 6'd16 && !(rd_smode && r_row == rv_h)) begin
+            r_n = (rd_smode && rot) ? 5'd1 : (rd_smode && rv_w - r_col < 12'd16) ? 5'(rv_w - r_col) : 5'd16;
+            r_addr_q <= rd_smode ? rs_addr : r_addr; r_len <= {3'd0, r_n}; r_req <= 1'b1;
             r_base <= r_ip; r_ip <= r_ip + {1'b0, r_n};
-            if (rd_smode && r_col + {7'd0, r_n} == v_sw) begin
-                r_col <= 12'd0; r_row <= r_row + 12'd1;
-                r_addr <= S_W + {6'd0, 12'(v_sy + r_row + 12'd1), 11'd0} + {17'd0, v_sx};
-            end else begin
-                r_col <= r_col + {7'd0, r_n};
-                r_addr <= r_addr + {24'd0, r_n};
-            end
+            r_addr <= r_addr + {24'd0, r_n};
+            if (rd_smode && r_col + {7'd0, r_n} == rv_w) begin r_col <= 12'd0; r_row <= r_row + 12'd1; end
+            else r_col <= r_col + {7'd0, r_n};
         end
         // ring -> word register
         if (r_pend) begin r_word <= ring_q; r_wv <= 1'b1; r_pend <= 1'b0; end
@@ -279,6 +294,8 @@ end
 reg         png_rst = 1'b1;
 reg   [2:0] l_op;                    // layer op (see blender)
 reg   [7:0] l_ca;                    // colour alpha
+reg         l_rect = 1'b0;           // solid-colour layer (layout <rect>): rect_px instead of the resampler
+reg  [31:0] rect_px;                 // {R, G, B, A}, premultiplied like a PNG pixel
 wire        png_px_valid, png_img_start;
 wire [31:0] png_px;
 wire [15:0] png_w, png_h;
@@ -324,11 +341,13 @@ art_resample res
 (
     .clk(clk),
     .start(rd_smode ? res_go : (png_img_start && !png_rst)),
-    .src_w(rd_smode ? v_sw : png_w[11:0]), .src_h(rd_smode ? v_sh : png_h[11:0]),
+    .src_w(rd_smode ? {1'b0, rv_w} : png_w[12:0]), .src_h(rd_smode ? {1'b0, rv_h} : png_h[12:0]),
     .dst_w(res_dw), .dst_h(res_dh), .flipx(res_flip),
     .in_valid(rd_smode ? r_pix_v : pm_valid), .in_px(rd_smode ? r_pix : pm_px), .in_ready(res_in_ready),
     .out_valid(res_valid), .out_px(res_px), .out_ready(res_ready), .done()
 );
+wire        src_valid = l_rect || res_valid;
+wire [31:0] src_px    = l_rect ? rect_px : res_px;
 
 // =================================================================== blender (RMW of S / N plane rows)
 // ops: 0 multiply (overlay), 1 add (backdrop), 2 alpha over (bezel), 3 alpha under, 4 mask (alpha only),
@@ -338,6 +357,7 @@ reg         bl_go = 1'b0, bl_abort = 1'b0;
 reg         bl_done = 1'b1;
 reg         bl_mask;                 // use the S mask byte as alpha
 reg         bl_nplane;
+reg   [1:0] bl_rot = 2'd0;           // view rotation: the layer is placed turned (one word per pixel), rect in table coords
 reg  signed [13:0] bl_x, bl_y;
 reg  [11:0] bl_w, bl_h, bl_cw, bl_ch;
 reg  [11:0] bp_x, bp_y;              // position within the rect
@@ -351,7 +371,10 @@ wire        b_out = b_cx < 0 || b_cy < 0 || b_cx >= $signed({2'b00, bl_cw}) || b
 wire signed [13:0] b_end0 = bl_x + $signed({2'b00, bl_w});
 wire signed [13:0] b_end  = (b_end0 < $signed({2'b00, bl_cw})) ? b_end0 : $signed({2'b00, bl_cw});
 wire [13:0] b_span = 14'(b_end - b_cx);
-wire  [6:0] b_n    = (b_span > 14'd64) ? 7'd64 : b_span[6:0];
+wire  [6:0] b_n    = (bl_rot != 2'd0) ? 7'd1 : (b_span > 14'd64) ? 7'd64 : b_span[6:0];
+// S position: CW (X, Y) -> (CH - 1 - Y, X), CCW (X, Y) -> (Y, CW - 1 - X) in the table's canvas (bl_cw x bl_ch)
+wire [11:0] b_ax   = (bl_rot == 2'd0) ? b_cx[11:0] : (bl_rot == 2'd2) ? 12'(bl_ch - 12'd1 - b_cy[11:0]) : b_cy[11:0];
+wire [11:0] b_ay   = (bl_rot == 2'd0) ? b_cy[11:0] : (bl_rot == 2'd2) ? b_cx[11:0] : 12'(bl_cw - 12'd1 - b_cx[11:0]);
 wire        fill = l_op == 3'd7;
 
 wire [63:0] bc_q;
@@ -377,26 +400,26 @@ always @(posedge clk) begin
     else case (bst)
         B_POS: if (bl_abort) begin bl_done <= 1'b1; bst <= B_IDLE; end
         else if (bp_y == bl_h) begin bl_done <= 1'b1; bst <= B_IDLE; end
-        else if (fill || (res_valid && !b_out)) begin
+        else if (fill || (src_valid && !b_out)) begin
             b_len <= b_n; b_len8 <= {1'b0, b_n};
-            b_addr <= (bl_nplane ? N_W + {8'd0, b_cy[11:0], 9'd0} : S_W + {6'd0, b_cy[10:0], 11'd0}) + {17'd0, b_cx[11:0]};
+            b_addr <= (bl_nplane ? N_W + {8'd0, b_cy[11:0], 9'd0} : S_W + {6'd0, b_ay[10:0], 11'd0}) + {17'd0, b_ax};
             b_we <= fill; b_req <= 1'b1;
             b_i <= 7'd0;
             bst <= fill ? B_WR : B_RD;
         end
-        else if (res_valid) begin   // outside the canvas: dropped (res_ready)
+        else if (src_valid) begin   // outside the canvas: dropped (res_ready)
             if (bp_x == bl_w - 12'd1) begin bp_x <= 12'd0; bp_y <= bp_y + 12'd1; end else bp_x <= bp_x + 12'd1;
         end
         B_RD: if (e_ack[3]) bst <= B_A;
         B_A:  bst <= B_B;            // b_i addresses port B
         B_B:  bst <= B_C;
         B_C:  if (bl_abort) begin bl_done <= 1'b1; bst <= B_IDLE; end
-        else if (res_valid) begin
+        else if (src_valid) begin
             bc_qd <= bc_q;
-            s_a   <= bl_mask ? bc_q[31:24] : res_px[7:0];
+            s_a   <= bl_mask ? bc_q[31:24] : src_px[7:0];
             for (j = 0; j < 3; j = j + 1) begin
-                s_raw[j] <= res_px[8 * (3 - j) +: 8];
-                s_c[j]   <= bl_mask ? div255(res_px[8 * (3 - j) +: 8] * bc_q[31:24]) : res_px[8 * (3 - j) +: 8];
+                s_raw[j] <= src_px[8 * (3 - j) +: 8];
+                s_c[j]   <= bl_mask ? div255(src_px[8 * (3 - j) +: 8] * bc_q[31:24]) : src_px[8 * (3 - j) +: 8];
             end
             bst <= B_D;
         end
@@ -436,27 +459,62 @@ function [7:0] mulf(input [7:0] s, input [7:0] a);   // overlay factor: lerp(whi
     mulf = sat({1'b0, s} + {1'b0, 8'hFF - a});
 endfunction
 
-// =================================================================== game capture (8-line ring) + native composite
+// =================================================================== game capture (32-line ring) + native composite
+// 32 lines: at 40 MHz with a slow DDR3 the compositor trails the raster by ~20 lines (sim, 2026-10-14)
 
 reg  [8:0] gx_c = 9'd0, gy_c = 9'd0;
 reg        old_hbl = 1'b0, old_vbl = 1'b0;
 reg        frame_start = 1'b0, frame_end = 1'b0, vbl_rise = 1'b0, line_inc = 1'b0;
 wire       act_px = !hblank_in && !vblank_in;
-wire [23:0] gr_q;
-reg  [10:0] gr_ra;
-dpram_dc #(.widthad_a(11), .width_a(24)) gring
+// line of the pixel being captured: a board may drop vblank on the frame's first pixel (Centipede), before gy_c resets
+wire [4:0] gy_w   = old_vbl ? 5'd0 : gy_c[4:0];
+// rotated games: the whole frame as 5-bit colour codes, 8 pixels a word, double-buffered at {buffer, index / 8}
+// (2 x 7680 words for 256 x 240). Each frame's first 32 colours get codes (a frame with more draws the rest as the
+// 32nd); the boards here show at most 32 at once.
+reg  [15:0] cap_i = 16'd0, cap_tot = 16'd0;   // pixel index in the frame, pixels in the last frame
+reg         cap_buf = 1'b0;
+reg  [39:0] cap_acc;
+reg  [23:0] cpal[64];                // colour of code n in buffer b: {b, n}
+reg   [5:0] cpal_n = 6'd0;           // codes in use in the frame being captured
+reg  [31:0] cpal_hit;
+integer     ci;
+always @* for (ci = 0; ci < 32; ci = ci + 1) cpal_hit[ci] = ci < cpal_n && cpal[{cap_buf, 5'(ci)}] == rgb_in;
+reg   [4:0] hit_code;                // codes are unique, so at most one hit: OR of the hit indices
+always @* begin
+    hit_code = 5'd0;
+    for (ci = 0; ci < 32; ci = ci + 1) if (cpal_hit[ci]) hit_code = hit_code | 5'(ci);
+end
+wire        cpal_new = cpal_hit == 32'd0 && !cpal_n[5];
+wire  [4:0] cap_px  = cpal_hit != 32'd0 ? hit_code : cpal_n[5] ? 5'd31 : cpal_n[4:0];
+wire        cap_vbr = ce_pix && vblank_in && !old_vbl;
+wire        cap_wr  = rot ? (ce_pix && act_px && cap_i[2:0] == 3'd7) || (cap_vbr && cap_i[2:0] != 3'd0) : ce_pix && act_px;
+wire [39:0] gr_qw;
+reg  [13:0] gr_ra;
+reg   [2:0] gr_sub;                 // rotated: pixel within the word read
+dpram_dc #(.widthad_a(14), .width_a(40)) gring
 (
-    .clock_a(clk), .address_a({gy_c[2:0], gx_c[7:0]}), .data_a(rgb_in), .wren_a(ce_pix && act_px), .q_a(),
-    .clock_b(clk), .address_b(gr_ra), .q_b(gr_q)
+    .clock_a(clk), .address_a(rot ? {cap_buf, cap_i[15:3]} : {gy_w, gx_c[8:0]}),
+    .data_a(rot ? (act_px ? {cap_px, cap_acc[34:0]} : cap_acc) : {16'd0, rgb_in}), .wren_a(cap_wr), .q_a(),
+    .clock_b(clk), .address_b(gr_ra), .q_b(gr_qw)
 );
+reg         cp_rbuf;                 // buffer the compositor reads (the last whole frame)
+wire  [4:0] gr_code = gr_qw[5 * gr_sub +: 5];
+wire [23:0] gr_q  = rot ? cpal[{cp_rbuf, gr_code}] : gr_qw[23:0];
+always @(posedge clk) if (ce_pix) begin
+    if (act_px) begin
+        cap_acc[5 * cap_i[2:0] +: 5] <= cap_px; cap_i <= cap_i + 16'd1;
+        if (cpal_new) begin cpal[{cap_buf, cpal_n[4:0]}] <= rgb_in; cpal_n <= cpal_n + 6'd1; end
+    end
+    if (vblank_in && !old_vbl) begin cap_tot <= cap_i; cap_buf <= ~cap_buf; cap_i <= 16'd0; cpal_n <= 6'd0; end
+end
 
 wire [63:0] nb_q;
-reg   [7:0] nb_x;                   // prefetch: first column of the burst
+reg   [8:0] nb_x;                   // prefetch: first column of the burst
 reg         nb_half;
-dpram_dc #(.widthad_a(9), .width_a(64)) nbuf
+dpram_dc #(.widthad_a(10), .width_a(64)) nbuf
 (
-    .clock_a(clk), .address_a({nb_half, 8'(nb_x + ebeat)}), .data_a(DDRAM_DOUT), .wren_a(e_rd[0]), .q_a(),
-    .clock_b(clk), .address_b({gy_c[0], crt_flip ? 8'(v_nw - 12'd1 - {3'd0, gx_c}) : gx_c[7:0]}), .q_b(nb_q)
+    .clock_a(clk), .address_a({nb_half, 9'(nb_x + {1'b0, ebeat})}), .data_a(DDRAM_DOUT), .wren_a(e_rd[0]), .q_a(),
+    .clock_b(clk), .address_b({vblank_in ? 1'b0 : gy_c[0], crt_flip ? 9'(v_nw - 12'd1 - {3'd0, gx_c}) : gx_c[8:0]}), .q_b(nb_q)
 );
 
 reg  run = 1'b0;
@@ -492,19 +550,19 @@ always @(posedge clk) begin
     if (!run) pf_on <= 1'b0;
     else begin
         if (line_inc) pf_upto <= gy_c + 9'd1;
-        // after line_inc: a board may raise vblank with the last line's hblank (same clock), and the frame restart must win
-        if (vbl_rise) begin pf_row <= 9'd0; pf_upto <= 9'd1; nb_x <= 8'd0; pf_on <= 1'b1; end
+        // after line_inc: the board raises vblank with the last line's hblank (same clock), and the frame restart must win
+        if (vbl_rise) begin pf_row <= 9'd0; pf_upto <= 9'd1; nb_x <= 9'd0; pf_on <= 1'b1; end
         if (pf_on && !p_req) begin
             if (pf_row <= pf_upto && pf_row < v_nh[8:0]) begin
-                p_addr <= N_W + {11'd0, crt_flip ? 9'(v_nh - 12'd1 - {3'd0, pf_row}) : pf_row, 9'd0} + {21'd0, nb_x};
-                p_len <= (v_nw - {4'd0, nb_x} > 12'd64) ? 8'd64 : 8'(v_nw - {4'd0, nb_x});
+                p_addr <= N_W + {11'd0, crt_flip ? 9'(v_nh - 12'd1 - {3'd0, pf_row}) : pf_row, 9'd0} + {20'd0, nb_x};
+                p_len <= (v_nw - {3'd0, nb_x} > 12'd64) ? 8'd64 : 8'(v_nw - {3'd0, nb_x});
                 p_req <= 1'b1;
                 nb_half <= pf_row[0];
             end
         end
         if (e_ack[0]) begin
-            if ({4'd0, nb_x} + 12'd64 >= v_nw) begin nb_x <= 8'd0; pf_row <= pf_row + 9'd1; end
-            else nb_x <= nb_x + 8'd64;
+            if ({3'd0, nb_x} + 12'd64 >= v_nw) begin nb_x <= 9'd0; pf_row <= pf_row + 9'd1; end
+            else nb_x <= nb_x + 9'd64;
         end
     end
 end
@@ -516,8 +574,12 @@ reg        fresh = 1'b0, vbl_pend = 1'b0, old_fbvbl = 1'b0;
 // shown area: the screen (zoom), else the screen plus every layer drawn (a layer switched off gives its space back)
 reg [11:0] k_x0, k_y0, k_x1, k_y1;
 wire       fbf = crt_flip ^ hdmi_flip;                                   // framebuffer written rotated 180
-wire [11:0] sa_x0 = zoom ? v_sx : k_x0, sa_y0 = zoom ? v_sy : k_y0;
-wire [11:0] sa_x1 = zoom ? v_sx + v_sw : k_x1, sa_y1 = zoom ? v_sy + v_sh : k_y1;
+wire [11:0] ua_x0 = zoom ? u_sx : k_x0, ua_y0 = zoom ? u_sy : k_y0;            // table coords
+wire [11:0] ua_x1 = zoom ? u_sx + u_sw : k_x1, ua_y1 = zoom ? u_sy + u_sh : k_y1;
+wire [11:0] sa_x0 = (vw_rot == 2'd0) ? ua_x0 : (vw_rot == 2'd2) ? u_ch - ua_y1 : ua_y0;
+wire [11:0] sa_y0 = (vw_rot == 2'd0) ? ua_y0 : (vw_rot == 2'd2) ? ua_x0 : u_cw - ua_x1;
+wire [11:0] sa_x1 = (vw_rot == 2'd0) ? ua_x1 : (vw_rot == 2'd2) ? u_ch - ua_y0 : ua_y1;
+wire [11:0] sa_y1 = (vw_rot == 2'd0) ? ua_y1 : (vw_rot == 2'd2) ? ua_x1 : u_cw - ua_x0;
 wire [11:0] fa_x = fbf ? v_cw - sa_x1 : sa_x0, fa_y = fbf ? v_ch - sa_y1 : sa_y0;
 assign     fb_base = {6'b001100, 2'b11, 24'd0} + {6'd0, o_fb, 24'd0}     // 33000000 + n * 01000000
                    + {7'd0, fa_y, 13'd0} + {18'd0, fa_x, 2'd0};
@@ -538,8 +600,11 @@ reg [23:0] dv_rem;                   // per-row game line: (row offset * NH) / S
 reg  [8:0] dv_q;
 reg  [3:0] dv_b = 4'd0;
 reg [11:0] dv_o;
-reg  [6:0] cp_n, cp_i, cp_i1;
-reg        cp_v1;
+reg  [6:0] cp_n, cp_i, cp_i1, cp_i2;
+reg  [6:0] cp_got;                   // S words of this chunk already in ccbuf (written the clock before)
+reg        cp_v1, cp_v2;
+reg [23:0] g2;                       // stage 2: game pixel and S word, registered (the colour-code lookup is slow)
+reg [63:0] cc2;
 reg  [1:0] cp_buf;
 reg [31:0] cp_lo;
 wire [63:0] cc_q;
@@ -562,15 +627,20 @@ dpram_dc #(.widthad_a(5), .width_a(64)) cwbuf
     .clock_b(clk), .address_b(wb_nxt[4:0]), .q_b(cw_q)
 );
 assign k_wdata = cw_q;
-always @* gr_ra = {cp_k[2:0], crt_flip ? 8'(v_nw - 12'd1 - {3'd0, cp_gx}) : cp_gx[7:0]};
+// rotated: frame index of the game pixel (picture unflipped; the board rotates it 180 for CRT Flip)
+reg  [16:0] cp_p;
+wire [15:0] cp_pf = crt_flip ? 16'(cap_tot - 16'd1 - cp_p[15:0]) : cp_p[15:0];
+always @* gr_ra = rot ? {cp_rbuf, cp_pf[15:3]} : {cp_k[4:0], crt_flip ? 9'(v_nw - 12'd1 - {3'd0, cp_gx}) : cp_gx[8:0]};
+always @(posedge clk) gr_sub <= cp_pf[2:0];
 
-wire [23:0] g1 = in_rect ? gr_q : 24'd0;
-wire [31:0] cpx = {8'd0, comp(g1[7:0], cc_q[23:16], cc_q[55:48]), comp(g1[15:8], cc_q[15:8], cc_q[47:40]), comp(g1[23:16], cc_q[7:0], cc_q[39:32])};
+wire [31:0] cpx = {8'd0, comp(g2[7:0], cc2[23:16], cc2[55:48]), comp(g2[15:8], cc2[15:8], cc2[47:40]), comp(g2[23:16], cc2[7:0], cc2[39:32])};
 
 always @(posedge clk) begin
     cw_we <= 1'b0;
     if (e_ack[1]) k_req <= 1'b0;
-    if (frame_start) begin frame_pend <= 1'b1; if (cst != C_IDLE) cp_late <= 1'b1; end
+    if (e_rd[1]) cp_got <= cp_got + 7'd1;
+    // rotated: a frame is composited once it is wholly captured (vblank), else following the raster
+    if (rot ? vbl_rise : frame_start) begin frame_pend <= 1'b1; if (cst != C_IDLE) cp_late <= 1'b1; end
 
     // triple buffering: o_fb takes the newest finished buffer at the display's vblank
     old_fbvbl <= fb_vbl;
@@ -585,7 +655,7 @@ always @(posedge clk) begin
             end else if (!run) frame_pend <= 1'b0;                 // only frames that begin while drawing count
             else if (frame_pend) begin
                 frame_pend <= 1'b0;
-                cp_imode <= 1'b0; cp_r <= 12'd0; cp_rows <= v_sh;
+                cp_imode <= 1'b0; cp_r <= 12'd0; cp_rows <= v_sh; cp_rbuf <= ~cap_buf;
                 dv_b <= 4'd0; cp_late <= 1'b0; cst <= C_GY;
             end
         end
@@ -594,14 +664,14 @@ always @(posedge clk) begin
             cp_xend <= cp_imode ? v_cw : v_sx + v_sw;
             cp_gx <= 9'd0; cp_hacc <= 24'd0;
             // running late into the next game frame: finish this one anyway (at worst a tear), the next starts at once
-            if (cp_imode || cp_late || frame_end || {3'd0, gy_c} > {3'd0, cp_k}) cst <= C_CHUNK;
+            if (cp_imode || rot || cp_late || frame_end || {3'd0, gy_c} > {3'd0, cp_k}) cst <= C_CHUNK;
         end
         C_GY: begin
             // CRT Flip: the picture arrives bottom-up, so the screen rect is composited bottom-up (capture order)
             if (dv_b == 4'd0) begin
-                dv_o = crt_flip ? cp_rows - 12'd1 - cp_r : cp_r;
+                dv_o = (crt_flip && !rot) ? cp_rows - 12'd1 - cp_r : cp_r;
                 cp_row <= v_sy + dv_o;
-                dv_rem <= dv_o * v_nh; dv_q <= 9'd0; dv_b <= 4'd10;
+                dv_rem <= dv_o * v_gh; dv_q <= 9'd0; dv_b <= 4'd10;
             end else if (dv_b != 4'd1) begin
                 if (dv_rem >= ({12'd0, v_sh} << (dv_b - 4'd2))) begin
                     dv_rem <= dv_rem - ({12'd0, v_sh} << (dv_b - 4'd2));
@@ -610,6 +680,8 @@ always @(posedge clk) begin
                 dv_b <= dv_b - 4'd1;
             end else begin
                 cp_k <= crt_flip ? 9'(v_nh - 12'd1 - {3'd0, dv_q}) : dv_q;
+                // rotated: portrait row dv_q = native column; ROT270 x = NW-1-row, y = col; ROT90 x = row, y = NH-1-col
+                cp_p <= rot90 ? {1'b0, 16'(cap_tot - {4'd0, v_nw} + {7'd0, dv_q})} : {8'd0, 9'(v_nw - 12'd1 - {3'd0, dv_q})};
                 dv_b <= 4'd0; cst <= C_ROW;
             end
         end
@@ -618,24 +690,28 @@ always @(posedge clk) begin
             k_addr <= S_W + {6'd0, cp_row[10:0], 11'd0} + {17'd0, cp_x};
             k_len <= (cp_xend - cp_x > 12'd64) ? 8'd64 : 8'(cp_xend - cp_x);
             k_we <= 1'b0; k_req <= 1'b1;
-            cst <= C_RD;
+            cp_i <= 7'd0; cp_v1 <= 1'b0; cp_v2 <= 1'b0; cp_got <= 7'd0;
+            cst <= C_CALC;                 // compute while the burst arrives (40 MHz: a serial read-then-calc misses the raster)
         end
-        C_RD: if (e_ack[1]) begin cp_i <= 7'd0; cp_v1 <= 1'b0; cst <= C_CALC; end
         C_CALC: begin
-            // address pixel cp_i (S word + game pixel), compute pixel cp_i1 from last clock's addresses
-            cp_v1 <= cp_i < cp_n; cp_i1 <= cp_i;
-            if (cp_i < cp_n) begin
+            // address pixel cp_i (S word + game pixel) once its word has landed, register pixel cp_i1, compute pixel cp_i2
+            cp_v1 <= cp_i < cp_n && cp_i < cp_got; cp_i1 <= cp_i;
+            cp_v2 <= cp_v1; cp_i2 <= cp_i1; g2 <= in_rect ? gr_q : 24'd0; cc2 <= cc_q;
+            if (cp_i < cp_n && cp_i < cp_got) begin
                 cp_i <= cp_i + 7'd1;
-                if (cp_hacc + {12'd0, v_nw} >= {12'd0, v_sw}) begin cp_hacc <= cp_hacc + {12'd0, v_nw} - {12'd0, v_sw}; cp_gx <= cp_gx + 9'd1; end
-                else cp_hacc <= cp_hacc + {12'd0, v_nw};
+                if (cp_hacc + {12'd0, v_gw} >= {12'd0, v_sw}) begin
+                    cp_hacc <= cp_hacc + {12'd0, v_gw} - {12'd0, v_sw}; cp_gx <= cp_gx + 9'd1;
+                    cp_p <= rot90 ? cp_p - {5'd0, v_nw} : cp_p + {5'd0, v_nw};     // next native line
+                end
+                else cp_hacc <= cp_hacc + {12'd0, v_gw};
             end
-            if (cp_v1) begin
-                if (!cp_i1[0]) cp_lo <= cpx;
+            if (cp_v2) begin
+                if (!cp_i2[0]) cp_lo <= cpx;
                 else begin                // framebuffer rotated 180: words in reverse order, pixels swapped
-                    cw_a <= fbf ? 5'(cp_n[6:1] - 6'd1 - {1'b0, cp_i1[5:1]}) : cp_i1[5:1];
+                    cw_a <= fbf ? 5'(cp_n[6:1] - 6'd1 - {1'b0, cp_i2[5:1]}) : cp_i2[5:1];
                     cw_d <= fbf ? {cp_lo, cpx} : {cpx, cp_lo}; cw_we <= 1'b1;
                 end
-                if (cp_i1 == cp_n - 7'd1) begin cp_buf <= 2'd0; cst <= C_WR; end
+                if (cp_i2 == cp_n - 7'd1) begin cp_buf <= 2'd0; cst <= C_WR; end
             end
         end
         C_WR: begin
@@ -675,8 +751,8 @@ reg   [4:0] rk;                      // record byte being fetched (+1 latency)
 reg   [9:0] rbase;
 reg         rbusy = 1'b0;
 assign      hdr_ra = rbase + {5'd0, rk};
-reg   [7:0] cur_cfg;
-wire  [7:0] cfg = {fbf, side_off, layer_off, sel};
+reg  [10:0] cur_cfg;
+wire [10:0] cfg = {1'b0, turn, fbf, side_off, layer_off, sel};
 assign      avail = blob_ok && img_ok != 32'd0;   // zip missing on the SD card: only the table came, no artwork
 reg   [5:0] l_cur, l_end;
 reg   [7:0] n_views;
@@ -685,16 +761,16 @@ reg  [27:0] wdog;
 
 wire [15:0] r16_0 = {rec[1], rec[0]},  r16_1 = {rec[3], rec[2]},  r16_2 = {rec[5], rec[4]},  r16_3 = {rec[7], rec[6]};
 // layer rect: side art (flag bit 4) uses its alternate x / width and the screen's rows when bezels are off
-wire        l_alt = cur_cfg[5] && rec[2][4];
+wire        l_alt = cur_cfg[6] && rec[2][4];
 wire signed [14:0] lr_x  = l_alt ? $signed({rec[13][6:0], rec[12]}) : $signed({rec[5][6:0], rec[4]});
-wire signed [14:0] lr_y  = l_alt ? $signed({3'b000, v_sy}) : $signed({rec[7][6:0], rec[6]});
+wire signed [14:0] lr_y  = l_alt ? $signed({3'b000, u_sy}) : $signed({rec[7][6:0], rec[6]});
 wire        [11:0] lr_w  = l_alt ? {rec[15][3:0], rec[14]} : {rec[9][3:0], rec[8]};
-wire        [11:0] lr_h  = l_alt ? v_sh : {rec[11][3:0], rec[10]};
+wire        [11:0] lr_h  = l_alt ? u_sh : {rec[11][3:0], rec[10]};
 wire signed [14:0] lr_x1 = lr_x + $signed({3'b000, lr_w}), lr_y1 = lr_y + $signed({3'b000, lr_h});
 // layer rect clipped to the canvas (for the shown area)
 wire [11:0] lc_x0 = lr_x < 0 ? 12'd0 : lr_x[11:0], lc_y0 = lr_y < 0 ? 12'd0 : lr_y[11:0];
-wire [11:0] lc_x1 = lr_x1 > $signed({3'b000, v_cw}) ? v_cw : lr_x1[11:0], lc_y1 = lr_y1 > $signed({3'b000, v_ch}) ? v_ch : lr_y1[11:0];
-wire        l_draw = img_ok[rec[1][4:0]] && !cur_cfg[3 + rec[2][3:2]] && !(cur_cfg[6] && rec[2][5]);
+wire [11:0] lc_x1 = lr_x1 > $signed({3'b000, u_cw}) ? u_cw : lr_x1[11:0], lc_y1 = lr_y1 > $signed({3'b000, u_ch}) ? u_ch : lr_y1[11:0];
+wire        l_draw = (rec[2][6] || img_ok[rec[1][4:0]]) && !cur_cfg[4 + rec[2][3:2]] && !(cur_cfg[7] && rec[2][5]);
 wire [15:0] r16_4 = {rec[9], rec[8]},  r16_5 = {rec[11], rec[10]}, r16_6 = {rec[13], rec[12]}, r16_7 = {rec[15], rec[14]};
 
 assign ddr_owner = qst != Q_IDLE || est != E_IDLE || c_req != 5'd0;
@@ -709,7 +785,7 @@ always @(posedge clk) begin
         if (rk == 5'd16) rbusy <= 1'b0;
     end
 
-    if (ioctl_download && (ioctl_index == 8'd0 || ioctl_index == 8'd5)) begin
+    if (ioctl_download && (ioctl_index == 8'd0 || ioctl_index == IDX)) begin
         // ROM / artwork reload: stop drawing (DDR transactions in flight finish on their own)
         run <= 1'b0; png_rst <= 1'b1; bl_abort <= 1'b1; rd_stop <= 1'b1;
         if (qst != Q_IDLE && bst == B_IDLE && cst == C_IDLE) qst <= Q_IDLE;
@@ -717,25 +793,37 @@ always @(posedge clk) begin
     else case (qst)
         Q_IDLE: begin
             bl_abort <= 1'b0;
-            if (avail && sel != 3'd0 && !rbusy) begin
+            if (avail && sel != 4'd0 && !rbusy) begin
                 cur_cfg <= cfg; rbase <= 10'd0; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_GLOB;
             end
         end
         Q_GLOB: if (!rbusy && !(rk == 5'd0)) begin
-            if (r16_0 != 16'h5741 || {5'd0, cur_cfg[2:0]} > rec[2]) qst <= Q_STOP;   // no table / no such view
+            if (r16_0 != 16'h5741 || {4'd0, cur_cfg[3:0]} > rec[2]) qst <= Q_STOP;   // no table / no such view
             else begin
                 v_nw <= r16_3[11:0]; v_nh <= r16_4[11:0];
-                rbase <= 10'd16 + {3'd0, cur_cfg[2:0] - 3'd1, 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_VIEW;
+                // turned: ROT270 layout CW and ROT90 CCW (the game is then the native raster), horizontal CW (game as ROT90)
+                v_rot  <= !cur_cfg[9] ? rec[10][1:0] : (rec[10][1:0] == 2'd0) ? 2'd2 : 2'd0;
+                vw_rot <= !cur_cfg[9] ? 2'd0 : (rec[10][1:0] == 2'd2) ? 2'd1 : 2'd2;
+                rbase <= 10'd16 + {2'd0, 4'(cur_cfg[3:0] - 4'd1), 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_VIEW;
             end
         end
         Q_VIEW: if (!rbusy) begin
-            v_cw <= r16_0[11:0]; v_ch <= r16_1[11:0]; v_sx <= r16_2[11:0]; v_sy <= r16_3[11:0];
-            v_sw <= r16_4[11:0]; v_sh <= r16_5[11:0];
+            u_cw <= r16_0[11:0]; u_ch <= r16_1[11:0]; u_sx <= r16_2[11:0]; u_sy <= r16_3[11:0];
+            u_sw <= r16_4[11:0]; u_sh <= r16_5[11:0];
+            if (vw_rot == 2'd0) begin
+                v_cw <= r16_0[11:0]; v_ch <= r16_1[11:0]; v_sx <= r16_2[11:0]; v_sy <= r16_3[11:0];
+                v_sw <= r16_4[11:0]; v_sh <= r16_5[11:0];
+            end else begin                   // turned 90: CW screen x = CH - SY - SH, y = SX; CCW x = SY, y = CW - SX - SW
+                v_cw <= r16_1[11:0]; v_ch <= r16_0[11:0]; v_sw <= r16_5[11:0]; v_sh <= r16_4[11:0];
+                v_sx <= (vw_rot == 2'd2) ? 12'(r16_1[11:0] - r16_3[11:0] - r16_5[11:0]) : r16_3[11:0];
+                v_sy <= (vw_rot == 2'd2) ? r16_2[11:0] : 12'(r16_0[11:0] - r16_2[11:0] - r16_4[11:0]);
+            end
             k_x0 <= r16_2[11:0]; k_y0 <= r16_3[11:0]; k_x1 <= r16_2[11:0] + r16_4[11:0]; k_y1 <= r16_3[11:0] + r16_5[11:0];
             l_cur <= r16_6[5:0]; l_end <= 6'(r16_6[5:0] + r16_7[5:0]);
-            // clear S
-            l_op <= 3'd7; bl_nplane <= 1'b0; bl_x <= 14'sd0; bl_y <= 14'sd0;
-            bl_w <= r16_0[11:0]; bl_h <= r16_1[11:0]; bl_cw <= r16_0[11:0]; bl_ch <= r16_1[11:0];
+            // clear S (canvas as drawn)
+            l_op <= 3'd7; l_rect <= 1'b0; bl_nplane <= 1'b0; bl_rot <= 2'd0; bl_x <= 14'sd0; bl_y <= 14'sd0;
+            if (vw_rot == 2'd0) begin bl_w <= r16_0[11:0]; bl_h <= r16_1[11:0]; bl_cw <= r16_0[11:0]; bl_ch <= r16_1[11:0]; end
+            else begin bl_w <= r16_1[11:0]; bl_h <= r16_0[11:0]; bl_cw <= r16_1[11:0]; bl_ch <= r16_0[11:0]; end
             bl_go <= 1'b1; qst <= Q_CLEAR;
         end
         Q_CLEAR: if (!bl_go && bl_done) begin
@@ -744,24 +832,27 @@ always @(posedge clk) begin
         end
         Q_LREC: if (!rbusy) begin
             l_op <= rec[0][2:0]; l_ca <= rec[3];
+            l_rect <= rec[2][6];             // rect layer: colour {byte 1, byte 12, byte 13}
+            rect_px <= {div255(rec[1] * rec[3]), div255(rec[12] * rec[3]), div255(rec[13] * rec[3]), rec[3]};
             bl_mask <= rec[2][1]; res_flip <= rec[2][0];
             bl_x <= lr_x[13:0]; bl_y <= lr_y[13:0];
             bl_w <= lr_w; bl_h <= lr_h; res_dw <= lr_w; res_dh <= lr_h;
-            bl_cw <= v_cw; bl_ch <= v_ch; bl_nplane <= 1'b0;
+            bl_cw <= u_cw; bl_ch <= u_ch; bl_nplane <= 1'b0; bl_rot <= vw_rot;
             rd_off <= img_off[rec[1][4:0]]; rd_smode <= 1'b0;
             qst <= l_draw ? Q_LGO : Q_LEND;                       // missing image / layer off
-            if (l_draw && lr_x1 > 0 && lr_y1 > 0 && lc_x0 < v_cw && lc_y0 < v_ch) begin
+            if (l_draw && lr_x1 > 0 && lr_y1 > 0 && lc_x0 < u_cw && lc_y0 < u_ch) begin
                 if (lc_x0 < k_x0) k_x0 <= lc_x0;
-                if (lc_y0 < k_y0 && !cur_cfg[5]) k_y0 <= lc_y0;      // bezels off: keep to the screen's rows
+                if (lc_y0 < k_y0 && !cur_cfg[6]) k_y0 <= lc_y0;      // bezels off: keep to the screen's rows
                 if (lc_x1 > k_x1) k_x1 <= lc_x1;
-                if (lc_y1 > k_y1 && !cur_cfg[5]) k_y1 <= lc_y1;
+                if (lc_y1 > k_y1 && !cur_cfg[6]) k_y1 <= lc_y1;
             end
         end
         Q_LGO: begin
-            png_rst <= 1'b0; rd_go <= 1'b1; bl_go <= 1'b1; wdog <= 28'd0; qst <= Q_LRUN;
+            if (!l_rect) begin png_rst <= 1'b0; rd_go <= 1'b1; end
+            bl_go <= 1'b1; wdog <= 28'd0; qst <= Q_LRUN;
         end
         Q_LRUN: begin
-            wdog <= wdog + 28'd1;
+            wdog <= (png_px_valid || src_valid) ? 28'd0 : wdog + 28'd1;   // stall timer: big bezels take seconds
             if (&wdog) bl_abort <= 1'b1;                    // corrupt / truncated PNG: give up on this layer
             if (!bl_go && bl_done) begin bl_abort <= 1'b0; rd_stop <= 1'b1; png_rst <= 1'b1; qst <= Q_LEND; end
         end
@@ -771,9 +862,9 @@ always @(posedge clk) begin
             else begin rbase <= 10'd256 + {6'(l_cur + 6'd1), 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_LREC; end
         end
         Q_NAT: begin                                        // S screen rect -> N plane (Q pass, then M pass)
-            rd_smode <= 1'b1; rd_mq <= n_pass;
+            rd_smode <= 1'b1; rd_mq <= n_pass; l_rect <= 1'b0;
             l_op <= n_pass ? 3'd6 : 3'd5; bl_mask <= 1'b0; res_flip <= 1'b0;
-            bl_nplane <= 1'b1; bl_x <= 14'sd0; bl_y <= 14'sd0;
+            bl_nplane <= 1'b1; bl_rot <= 2'd0; bl_x <= 14'sd0; bl_y <= 14'sd0;
             bl_w <= v_nw; bl_h <= v_nh; bl_cw <= v_nw; bl_ch <= v_nh; res_dw <= v_nw; res_dh <= v_nh;
             rd_go <= 1'b1; res_go <= 1'b1; bl_go <= 1'b1;
             qst <= Q_NRUN;
@@ -799,10 +890,12 @@ reg  [4:0] dbg_n = 5'd0;
 always @(posedge clk) begin
     dbg_c <= dbg_c + 32'd1;
     dbg_q <= qst;
+    if (qst == Q_GLOB && !rbusy && rk != 5'd0) $display("%0d: glob rec %02x %02x %02x %02x cur_cfg %03x sel %0d", dbg_c, rec[0], rec[1], rec[2], rec[3], cur_cfg, sel);
     if (qst != dbg_q) $display("%0d: qst %0d layer %0d op %0d rect %0d,%0d %0dx%0d img_ok %08x", dbg_c, qst, l_cur, l_op, bl_x, bl_y, bl_w, bl_h, img_ok);
     if (r_byte_v && png_in_ready && dbg_n < 20) begin dbg_n <= dbg_n + 5'd1; $display("%0d: byte %02x pst %0d bcnt %0d clen %0d cpos %0d ctype_ch %0d rst %0d", dbg_c, r_byte, png.pst, png.bcnt, png.clen, png.cpos, png.ctype_ch, png_rst); end
     if (rd_go) dbg_n <= 5'd0;
     if (cp_done1) $display("%0d: frame done buf %0d", dbg_c, i_fb);
+    if (cst == C_IDLE && frame_pend && run && !cp_init) $display("%0d: composite start rot %0d", dbg_c, rot);
     if (frame_start && run) $display("%0d: frame_start cst %0d row %0d", dbg_c, cst, cp_r);
     if (vbl_pend && !cp_done1 && fresh) $display("%0d: show buf %0d", dbg_c, l_fb);
     if (rd_go) $display("%0d: reader start off %0d smode %0d", dbg_c, rd_off, rd_smode);
