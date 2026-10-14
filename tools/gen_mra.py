@@ -60,10 +60,11 @@ CLK_PER_FRAME = 384 * 8 * 263                                     # Centipede bo
 # MAME artwork (rtl/art/artwork.sv): set -> games/mame-artwork/<zip>, used as-is. The MRA sends a 1024-byte layout
 # table (from the zip's default.lay) then each PNG behind an "AWI"+id marker on ioctl index 5. The OSD Artwork page
 # picks the view (View n = the n-th view of default.lay, listed in the MRA) and MAME's layer toggles.
-ARTWORK = {"warlords": "warlords"}
+ARTWORK = {"warlords": "warlords", "ccastles": "ccastles"}
 ART_DIR = Path(__file__).resolve().parent.parent / "games" / "mame-artwork"
 ART_SCREEN_W = 512          # canvas pixels across the game screen (HDMI framebuffer); 2x native fits the DDR budget
 ART_NATIVE = (256, 240)     # game pixels (MAME visarea) = the native composite plane
+ART_NATIVE_BY = {"ccastles": (256, 232)}     # boards whose visarea differs (ccastles: sync PROM vblank, lines 24-255)
 
 F_TB, F_PADDLE, F_STICK, F_NOJOY, F_VERT, F_ROT90 = 0x01, 0x02, 0x04, 0x08, 0x10, 0x80
 
@@ -397,9 +398,10 @@ HISCORES = parse_hiscores(HISCORE_DAT) if HISCORE_DAT.exists() else {}
 
 def art_table(zipname):
     """MAME default.lay -> (1024-byte table, [png names], [view names]); see rtl/art/artwork.sv for the format."""
-    import struct, zipfile
+    import struct, zipfile, copy
     import xml.etree.ElementTree as ET
     z = zipfile.ZipFile(ART_DIR / f"{zipname}.zip")
+    native = ART_NATIVE_BY.get(zipname, ART_NATIVE)
     lay = ET.fromstring(z.read("default.lay"))
 
     def png_size(name):
@@ -432,9 +434,35 @@ def art_table(zipname):
         return images.index(name)
 
     OP_MUL, OP_ADD, OP_ALPHA, OP_UNDER, OP_MASK = 0, 1, 2, 3, 4
+    groups = {g.get("name"): g for g in lay.findall("group")}
+    def flatten(node):
+        # <group ref>: the group's items mapped from its bounds (or the union of its items) into the reference's bounds
+        out = []
+        for it in node:
+            if it.tag == "group" and it.get("ref") in groups:
+                inner = flatten(groups[it.get("ref")])
+                gb = bounds(groups[it.get("ref")])
+                if gb is None:
+                    bs = [bounds(i) for i in inner]
+                    x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
+                    gb = (x0, y0, max(b[0] + b[2] for b in bs) - x0, max(b[1] + b[3] for b in bs) - y0)
+                tb = bounds(it) or gb
+                kx, ky = tb[2] / gb[2], tb[3] / gb[3]
+                for i in inner:
+                    b = bounds(i)
+                    c = copy.deepcopy(i)
+                    for old_b in c.findall("bounds"):
+                        c.remove(old_b)
+                    ET.SubElement(c, "bounds", x=str(tb[0] + (b[0] - gb[0]) * kx), y=str(tb[1] + (b[1] - gb[1]) * ky),
+                                  width=str(b[2] * kx), height=str(b[3] * ky))
+                    out.append(c)
+            elif it.tag != "group" and bounds(it) is not None:
+                out.append(it)
+        return out
+
     for v in lay.findall("view"):
         items = {k: [] for k in ("backdrop", "screen", "overlay", "bezel", "cpanel", "marquee")}
-        for it in v:
+        for it in flatten(v):
             if it.tag in items:
                 items[it.tag].append(it)
         if len(items["screen"]) != 1:
@@ -452,7 +480,7 @@ def art_table(zipname):
         sx = round((sb[0] - vb[0]) * sc) - ox
         sy = round((sb[1] - vb[1]) * sc)
         sw, sh = ART_SCREEN_W, round(sb[3] * sc)
-        assert cw <= 2048 and ch <= 2048 and sw >= ART_NATIVE[0] and sh >= ART_NATIVE[1], v.get("name")
+        assert cw <= 2048 and ch <= 2048 and sw >= native[0] and sh >= native[1], v.get("name")
         if items["overlay"] or len(items["backdrop"]) <= 1:
             order = [(OP_MUL, "overlay"), (OP_ADD, "backdrop"), (OP_ALPHA, "bezel"), (OP_ALPHA, "cpanel"), (OP_ALPHA, "marquee")]
         else:
@@ -498,7 +526,7 @@ def art_table(zipname):
         views.append((v.get("name"), (cw, ch, sx, sy, sw, sh, first, len(layers) - first)))
     assert len(views) <= 7 and len(layers) <= 48 and len(images) <= 32
     t = bytearray(1024)
-    struct.pack_into("<2sHHHH", t, 0, b"AW", len(views), len(images), *ART_NATIVE)
+    struct.pack_into("<2sHHHH", t, 0, b"AW", len(views), len(images), *native)
     for i, (_, rec) in enumerate(views):
         struct.pack_into("<8H", t, 16 + 16 * i, *rec)
     for i, (op, img, fl, ca, x, y, w, h, x2, w2) in enumerate(layers):

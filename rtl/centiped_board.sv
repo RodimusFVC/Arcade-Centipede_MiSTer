@@ -373,7 +373,7 @@ reg  [7:0] wd_hold = 8'd0;
 always @(posedge clk) begin
     vbl_d <= vblank;
     if (reset || v_bull || (bus_we & wr_wdog)) wd_cnt <= 4'd0;
-    else if (vblank & ~vbl_d)                  wd_cnt <= wd_cnt + 4'd1;
+    else if (vblank & ~vbl_d & ~pause)         wd_cnt <= wd_cnt + 4'd1;   // paused CPU can't kick it: freeze the count
     if (wd_cnt == 4'd8 && !wd_fire) begin wd_fire <= 1'b1; wd_hold <= 8'd0; wd_cnt <= 4'd0; end
     else if (wd_fire) begin
         wd_hold <= wd_hold + 8'd1;

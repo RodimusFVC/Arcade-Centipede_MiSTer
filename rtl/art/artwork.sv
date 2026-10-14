@@ -97,6 +97,7 @@ wire  [7:0] wb_nxt  = w_acc ? ebeat + 8'd1 : (est == E_WDATA ? ebeat : 8'd0);
 wire        rd_v    = est == E_RDATA && DDRAM_DOUT_READY;
 wire        e_last  = (rd_v || w_acc) && ebeat == elen - 8'd1;
 wire  [4:0] e_ack   = e_last ? (5'd1 << ecur) : 5'd0;      // client's last beat: it drops req on this clock
+wire        nat_pend;                                       // native prefetch has a row due (set with the prefetch)
 
 assign DDRAM_CLK      = clk;
 assign DDRAM_BURSTCNT = elen;
@@ -111,7 +112,7 @@ always @(posedge clk) begin
         E_IDLE: begin
             ebeat <= 8'd0;
             if      (p_req) begin ecur <= 3'd0; eaddr <= p_addr;   elen <= p_len;  est <= E_RREQ; end
-            else if (k_req) begin ecur <= 3'd1; eaddr <= k_addr;   elen <= k_len;  est <= k_we ? E_WPRIME : E_RREQ; end
+            else if (k_req && !nat_pend) begin ecur <= 3'd1; eaddr <= k_addr;   elen <= k_len;  est <= k_we ? E_WPRIME : E_RREQ; end   // compositor waits while a native row is due
             else if (w_req) begin ecur <= 3'd2; eaddr <= w_addr;   elen <= 8'd1;   est <= E_WPRIME; end
             else if (b_req) begin ecur <= 3'd3; eaddr <= b_addr;   elen <= b_len8; est <= b_we ? E_WPRIME : E_RREQ; end
             else if (r_req) begin ecur <= 3'd4; eaddr <= r_addr_q; elen <= r_len;  est <= E_RREQ; end
@@ -485,12 +486,14 @@ end
 // native row prefetch: rows 0 and 1 at the end of a frame, then row y + 1 when line y starts
 reg  [8:0] pf_row, pf_upto;
 reg        pf_on = 1'b0;
+assign     nat_pend = pf_on && pf_row <= pf_upto && pf_row < v_nh[8:0];
 always @(posedge clk) begin
     if (e_ack[0]) p_req <= 1'b0;
     if (!run) pf_on <= 1'b0;
     else begin
-        if (vbl_rise) begin pf_row <= 9'd0; pf_upto <= 9'd1; nb_x <= 8'd0; pf_on <= 1'b1; end
         if (line_inc) pf_upto <= gy_c + 9'd1;
+        // after line_inc: a board may raise vblank with the last line's hblank (same clock), and the frame restart must win
+        if (vbl_rise) begin pf_row <= 9'd0; pf_upto <= 9'd1; nb_x <= 8'd0; pf_on <= 1'b1; end
         if (pf_on && !p_req) begin
             if (pf_row <= pf_upto && pf_row < v_nh[8:0]) begin
                 p_addr <= N_W + {11'd0, crt_flip ? 9'(v_nh - 12'd1 - {3'd0, pf_row}) : pf_row, 9'd0} + {21'd0, nb_x};
@@ -674,7 +677,7 @@ reg         rbusy = 1'b0;
 assign      hdr_ra = rbase + {5'd0, rk};
 reg   [7:0] cur_cfg;
 wire  [7:0] cfg = {fbf, side_off, layer_off, sel};
-assign      avail = blob_ok;
+assign      avail = blob_ok && img_ok != 32'd0;   // zip missing on the SD card: only the table came, no artwork
 reg   [5:0] l_cur, l_end;
 reg   [7:0] n_views;
 reg         n_pass;
@@ -714,7 +717,7 @@ always @(posedge clk) begin
     else case (qst)
         Q_IDLE: begin
             bl_abort <= 1'b0;
-            if (blob_ok && sel != 3'd0 && !rbusy) begin
+            if (avail && sel != 3'd0 && !rbusy) begin
                 cur_cfg <= cfg; rbase <= 10'd0; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_GLOB;
             end
         end
