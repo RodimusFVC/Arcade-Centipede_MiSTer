@@ -482,6 +482,21 @@ always @(posedge clk) lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr
 wire [3:0] p1c0, p1c1, p1c2, p1c3, p2c0, p2c1, p2c2, p2c3;
 wire [7:0] pokey1_q, pokey2_q;
 
+// POKEY clock: a steady 12.096 MHz / 8 = 1.512 MHz (MAME), not the CPU's stretched phi0. Phase ph 3 of every 4th
+// pixel, so it never coincides with cpu_ce (ph 7). A CPU write is held until the next POKEY clock.
+reg  [1:0] pk_hi = 2'd0;
+always @(posedge clk) if (ce_pix) pk_hi <= pk_hi + 2'd1;
+wire       pk_ce = ph == 3'd3 && pk_hi == 2'd0 && !pause;
+reg        pk1_pend = 1'b0, pk2_pend = 1'b0;
+reg  [3:0] pk1_wa = 4'd0, pk2_wa = 4'd0;
+reg  [7:0] pk1_wd = 8'd0, pk2_wd = 8'd0;
+always @(posedge clk) begin
+    if (pk_ce) begin pk1_pend <= 1'b0; pk2_pend <= 1'b0; end
+    if (cpu_ce && !cpu_rw_n && sel_pokey1) begin pk1_pend <= 1'b1; pk1_wa <= bus_a[3:0]; pk1_wd <= bus_dout; end
+    if (cpu_ce && !cpu_rw_n && sel_pokey2) begin pk2_pend <= 1'b1; pk2_wa <= bus_a[3:0]; pk2_wd <= bus_dout; end
+end
+wire       pk1_w = pk_ce & pk1_pend, pk2_w = pk_ce & pk2_pend;
+
 // Warlords paddles on POT0-3 as the real pot scan (MAME pokey_potgo / step_pot): after POTGO the counter runs at
 // clock / 114 (fast mode: every clock) to 228; a pot latches once the counter passes its value, ALLPOT reads 1 while
 // it is still counting and POTn reads the running counter until then
@@ -490,8 +505,8 @@ wire [7:0] pot_cmp = v_war ? {4'h0, pot_count1 > an3, pot_count1 > an2, pot_coun
 
 pokey pokey1
 (
-    .clk(clk), .ce(cpu_ce), .enable_179(1'b1), .addr(bus_a[3:0]), .data_in(bus_dout),
-    .wr_en(~cpu_rw_n & sel_pokey1), .reset_n(cpu_reset_n),
+    .clk(clk), .ce(pk_ce), .enable_179(1'b1), .addr(pk1_w ? pk1_wa : bus_a[3:0]), .data_in(pk1_wd),
+    .wr_en(pk1_w), .reset_n(cpu_reset_n),
     .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
     .pot_in(pot_cmp), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
     .data_out(pokey1_q),
@@ -502,8 +517,8 @@ pokey pokey1
 
 pokey pokey2
 (
-    .clk(clk), .ce(cpu_ce & map_m), .enable_179(1'b1), .addr(bus_a[3:0]), .data_in(bus_dout),
-    .wr_en(~cpu_rw_n & sel_pokey2), .reset_n(cpu_reset_n),
+    .clk(clk), .ce(pk_ce & map_m), .enable_179(1'b1), .addr(pk2_w ? pk2_wa : bus_a[3:0]), .data_in(pk2_wd),
+    .wr_en(pk2_w), .reset_n(cpu_reset_n),
     .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
     .pot_in(8'h00), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
     .data_out(pokey2_q),

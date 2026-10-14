@@ -1010,7 +1010,9 @@ module pokey(clk, ce, enable_179, addr, data_in, wr_en, reset_n, keyboard_scan_e
       
       if (((enable_15 & (~(skctl_reg[2]))) | (enable_179 & skctl_reg[2])) == 1'b1)
       begin
-         pot_counter_next <= (pot_counter_reg + 8'b1);
+         // the scan stops at 228 (MAME step_pot: counter < 228); it used to run on and wrap (Centipede core, 2026-10-13)
+         if (pot_counter_reg != 8'he4)
+            pot_counter_next <= (pot_counter_reg + 8'b1);
          if (pot_counter_reg == 8'he4)
          begin
             pot_reset_next <= 1'b1;

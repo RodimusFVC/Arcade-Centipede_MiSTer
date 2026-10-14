@@ -119,8 +119,11 @@ wire vert_view = game_vert & ~status[8];
 
 wire [1:0] ar = status[7:6];
 
-assign VIDEO_ARX = (!ar) ? (vert_view ? 12'd3 : 12'd4) : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? (vert_view ? 12'd4 : 12'd3) : 12'd0;
+wire        art_fb;                // artwork framebuffer on HDMI: square canvas pixels
+wire        art_wait, art_avail;
+wire [11:0] art_cw, art_ch;
+assign VIDEO_ARX = (!ar) ? (art_fb ? art_cw : vert_view ? 12'd3 : 12'd4) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? (art_fb ? art_ch : vert_view ? 12'd4 : 12'd3) : 12'd0;
 
 // Status bits avoid the old Centipede core's 2-5, 11-16, 19-20 and 25-27 so its saved settings can't leak in
 `include "build_id.v"
@@ -142,6 +145,14 @@ localparam CONF_STR = {
 	"H2P2O[44:42],Paddle Sensitivity,1.0x,0.75x,0.5x,0.25x,0.125x,1.25x,1.5x,2.0x;",
 	"H2P2O[45],Paddle Direction,Normal,Reversed;",
 	"H2P2-,Paddle / spinner / mouse / stick;",
+	"H3P2-;",
+	"H3P2-,Artwork (MAME layout views);",
+	"H3P2O[49:47],View,Off,View 1,View 2,View 3,View 4,View 5,View 6,View 7;",
+	"H3P2O[50],Backdrop,On,Off;",
+	"H3P2O[51],Overlay,On,Off;",
+	"H3P2O[52],Bezel,On,Off;",
+	"H3P2O[54],Side Art,On,Off;",
+	"H3P2O[53],Zoom to Screen,Off,On;",
 	"-;",
 	"P3,Pause Options;",
 	"P3O[17],Pause when OSD is open,On,Off;",
@@ -171,7 +182,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 	.buttons(buttons),
 	.status(status),
-	.status_menumask({~pad_game, ~tb_game, direct_video}),
+	.status_menumask({~art_avail, ~pad_game, ~tb_game, direct_video}),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_upload(ioctl_upload),
@@ -181,6 +192,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_dout(ioctl_dout),
 	.ioctl_din(ioctl_din),
 	.ioctl_index(ioctl_index),
+	.ioctl_wait(art_wait),
 
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
@@ -499,14 +511,70 @@ wire ce_pix;
 wire        c_ce, c_hs, c_vs, c_hbl, c_vbl, k_ce, k_hs, k_vs, k_hbl, k_vbl;
 wire  [7:0] c_r, c_g, c_b, k_r, k_g, k_b;
 wire signed [15:0] c_audio, k_audio;
-assign {ce_pix, hs, vs, hblank, vblank} = v_cc ? {k_ce, k_hs, k_vs, k_hbl, k_vbl} : {c_ce, c_hs, c_vs, c_hbl, c_vbl};
-assign {r, g, b} = v_cc ? {k_r, k_g, k_b} : {c_r, c_g, c_b};
+wire        bd_hs, bd_vs, bd_hbl, bd_vbl;
+assign {ce_pix, bd_hs, bd_vs, bd_hbl, bd_vbl} = v_cc ? {k_ce, k_hs, k_vs, k_hbl, k_vbl} : {c_ce, c_hs, c_vs, c_hbl, c_vbl};
+wire [23:0] bd_rgb = v_cc ? {k_r, k_g, k_b} : {c_r, c_g, c_b};
+
+// MAME artwork (ioctl index 5, OSD Artwork page): native composite on the core video (one pixel late),
+// full view through the DDR3 framebuffer on HDMI
+wire        art_run, art_ddr;
+wire [31:0] art_fb_base;
+wire  [7:0] art_burstcnt, art_be;
+wire [28:0] art_addr;
+wire [63:0] art_din;
+wire        art_rd, art_we, art_clk;
+artwork artwork
+(
+	.clk(CLK_48M),
+	.sel(status[49:47]), .layer_off(status[52:50]), .side_off(status[54]), .zoom(status[53]), .avail(art_avail),
+	.ioctl_download(ioctl_download), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout), .ioctl_wait(art_wait),
+	.ce_pix(ce_pix),
+	.hs_in(bd_hs), .vs_in(bd_vs), .hblank_in(bd_hbl), .vblank_in(bd_vbl), .rgb_in(bd_rgb),
+	.hs_out(hs), .vs_out(vs), .hblank_out(hblank), .vblank_out(vblank), .rgb_out({r, g, b}),
+	.running(art_run), .ddr_owner(art_ddr), .canvas_w(art_cw), .canvas_h(art_ch),
+	.fb_base(art_fb_base), .fb_vbl(FB_VBL),
+	.DDRAM_CLK(art_clk), .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(art_burstcnt), .DDRAM_ADDR(art_addr),
+	.DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(art_rd),
+	.DDRAM_DIN(art_din), .DDRAM_BE(art_be), .DDRAM_WE(art_we)
+);
+assign art_fb = art_run & ~direct_video;
 assign audio = v_cc ? k_audio : c_audio;
 
 wire rotate_ccw = ~game_flags[7];  // ROT270 sets rotate CCW, ROT90 sets CW
 wire no_rotate  = ~game_vert | status[8] | direct_video;
 wire flip       = status[9];
-screen_rotate screen_rotate(.*);
+wire        sr_fb_en, sr_clk, sr_rd, sr_we;
+wire  [4:0] sr_fb_format;
+wire [11:0] sr_fb_w, sr_fb_h;
+wire [31:0] sr_fb_base;
+wire [13:0] sr_fb_stride;
+wire  [7:0] sr_burstcnt, sr_be;
+wire [28:0] sr_addr;
+wire [63:0] sr_din;
+screen_rotate screen_rotate
+(
+	.*,
+	.FB_EN(sr_fb_en), .FB_FORMAT(sr_fb_format), .FB_WIDTH(sr_fb_w), .FB_HEIGHT(sr_fb_h),
+	.FB_BASE(sr_fb_base), .FB_STRIDE(sr_fb_stride),
+	.DDRAM_CLK(sr_clk), .DDRAM_BURSTCNT(sr_burstcnt), .DDRAM_ADDR(sr_addr), .DDRAM_DIN(sr_din),
+	.DDRAM_BE(sr_be), .DDRAM_WE(sr_we), .DDRAM_RD(sr_rd)
+);
+
+// the artwork takes the framebuffer while it draws, and DDR3 while it loads or draws
+assign FB_EN     = art_fb | sr_fb_en;
+assign FB_FORMAT = art_fb ? 5'b00110  : sr_fb_format;
+assign FB_WIDTH  = art_fb ? art_cw    : sr_fb_w;
+assign FB_HEIGHT = art_fb ? art_ch    : sr_fb_h;
+assign FB_BASE   = art_fb ? art_fb_base : sr_fb_base;
+assign FB_STRIDE = art_fb ? 14'd8192  : sr_fb_stride;
+assign DDRAM_CLK      = CLK_48M;
+assign DDRAM_BURSTCNT = art_ddr ? art_burstcnt : sr_burstcnt;
+assign DDRAM_ADDR     = art_ddr ? art_addr : sr_addr;
+assign DDRAM_DIN      = art_ddr ? art_din : sr_din;
+assign DDRAM_BE       = art_ddr ? art_be : sr_be;
+assign DDRAM_WE       = art_ddr ? art_we : sr_we;
+assign DDRAM_RD       = art_ddr ? art_rd : sr_rd;
 
 arcade_video #(256,24) arcade_video
 (

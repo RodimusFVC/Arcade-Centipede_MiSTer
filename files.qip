@@ -5,6 +5,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/centiped_board.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ccastles_board.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/eeprom_93c46.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/paddle_ctl.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/artwork.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/art_resample.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/png_decode.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/inflate.sv
 
 set_global_assignment -name QIP_FILE rtl/cpu/T65/t65.qip
 set_global_assignment -name QIP_FILE rtl/sound/pokey/pokey.qip

@@ -66,6 +66,10 @@ module pokey_poly_17_9(clk, ce, reset_n, enable, select_9_17, init, bit_out, ran
          
          cycle_delay_next <= shift_reg[9];
       end
+      // Init mode (SKCTL[1:0] = 0) holds the poly at its settled state at once (MAME: counters held in reset), so
+      // RANDOM reads the same value throughout; Warlords reads it 4 clocks after SKCTL = 0 and checks it later.
+      if (init == 1'b1)
+         shift_next <= 17'b00000000011111111;
    end
    
    assign bit_out = cycle_delay_reg;
