@@ -336,7 +336,8 @@ wire [7:0] in0_v = {in0[7:6], vblank, in0[4:0]};
 
 wire [3:0] p1c0, p1c1, p1c2, p1c3, p2c0, p2c1, p2c2, p2c3;
 wire [7:0] pk1_q, pk2_q;
-pokey pokey1
+// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey1
+pokey_glue pokey1
 (
     .clk(clk), .ce(cpu_ce), .enable_179(1'b1), .addr(a[3:0]), .data_in(cpu_dout),
     .wr_en(~cpu_rw_n & sel_pk1), .reset_n(cpu_reset_n),
@@ -347,7 +348,8 @@ pokey pokey1
     .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
     .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
 );
-pokey pokey2
+// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey2
+pokey_glue pokey2
 (
     .clk(clk), .ce(cpu_ce), .enable_179(1'b1), .addr(a[3:0]), .data_in(cpu_dout),
     .wr_en(~cpu_rw_n & sel_pk2), .reset_n(cpu_reset_n),

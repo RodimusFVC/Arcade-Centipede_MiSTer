@@ -503,7 +503,8 @@ wire       pk1_w = pk_ce & pk1_pend, pk2_w = pk_ce & pk2_pend;
 wire [7:0] pot_count1;
 wire [7:0] pot_cmp = v_war ? {4'h0, pot_count1 > an3, pot_count1 > an2, pot_count1 > an1, pot_count1 > an0} : 8'h00;
 
-pokey pokey1
+// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey1
+pokey_glue #(.POT_CMP(8'h0F)) pokey1
 (
     .clk(clk), .ce(pk_ce), .enable_179(1'b1), .addr(pk1_w ? pk1_wa : bus_a[3:0]), .data_in(pk1_wd),
     .wr_en(pk1_w), .reset_n(cpu_reset_n),
@@ -515,7 +516,8 @@ pokey pokey1
     .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count(pot_count1)
 );
 
-pokey pokey2
+// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey2
+pokey_glue pokey2
 (
     .clk(clk), .ce(pk_ce & map_m), .enable_179(1'b1), .addr(pk2_w ? pk2_wa : bus_a[3:0]), .data_in(pk2_wd),
     .wr_en(pk2_w), .reset_n(cpu_reset_n),

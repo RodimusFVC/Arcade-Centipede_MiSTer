@@ -12,6 +12,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/inflate.sv
 
 set_global_assignment -name QIP_FILE rtl/cpu/T65/t65.qip
 set_global_assignment -name QIP_FILE rtl/sound/pokey/pokey.qip
+set_global_assignment -name QIP_FILE rtl/sound/pokey_cx/pokey_cx.qip
 set_global_assignment -name QIP_FILE rtl/sound/jt49/hdl/jt49.qip
 set_global_assignment -name QIP_FILE rtl/sound/jt89/syn/quartus/jt89_verilog.qip
 set_global_assignment -name VERILOG_FILE rtl/sound/jt49/hdl/filter/jt49_dcrm2.v
