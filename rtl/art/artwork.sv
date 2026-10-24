@@ -3,7 +3,7 @@
 //  MAME artwork (backdrop / overlay / bezel) for MiSTer arcade cores
 //  Copyright (C) 2026 Rodimus
 //
-//  ioctl index IDX = [1024-byte layout table from gen_mra][marker "AWI"+id][PNG]... (PNGs straight from the
+//  ioctl index IDX = [2048-byte layout table from gen_mra][marker "AWI"+id][PNG]... (PNGs straight from the
 //  MAME artwork zip). The PNGs are stored in DDR3, then the selected view is decoded (png_decode), scaled
 //  (art_resample) and blended in MAME's legacy layer order into a canvas plane S of {Q, M} words:
 //  final pixel = clamp(Q + game * M / 255) (Q = everything added on top, M = overlay / bezel factor).
@@ -15,7 +15,7 @@
 //  monitor (vertical game: the game picture is then the native raster; horizontal game: turned CW, drawn as a rotated
 //  game). Layers are blended transposed into S; the rest of the pipeline is unchanged.
 //
-//  DDR3 (byte addresses): blob 38000000 (32 MB), S 31000000 (2048 words / row), FB 33000000 / 34000000 / 35000000
+//  DDR3 (byte addresses): blob 38000000 (64 MB), S 31000000 (2048 words / row), FB 33000000 / 34000000 / 35000000
 //  (8192 bytes / row), N 36000000 (512 words / row).
 //
 //  Redistribution and use in source and synthesized forms, with or without modification, are permitted
@@ -23,22 +23,25 @@
 //
 //============================================================================
 
-module artwork #(parameter [7:0] IDX = 8'd5)   // ioctl index of the artwork download
+module artwork #(parameter [7:0] IDX = 8'd5,    // ioctl index of the artwork download
+                 parameter int CODE_BITS = 5)   // rotated games: colours per frame = 2^CODE_BITS (5-8)
 (
     input             clk,
     input       [3:0] sel,             // 0 = off, n = view n of the layout table
-    input       [2:0] layer_off,       // [0] backdrops, [1] overlays, [2] bezels (MAME's layer toggles)
+    input       [3:0] layer_off,       // [0] backdrops, [1] overlays, [2] bezels, [3] control panels / marquees
     input             side_off,        // layers beside the screen (side art) off
     input             zoom,            // framebuffer shows the screen area only
     input             crt_flip,        // board picture is rotated 180 (CRT Flip): artwork follows on the core video
     input             hdmi_flip,       // HDMI Flip; the framebuffer is rotated 180 when crt_flip ^ hdmi_flip
     input             turn,            // rotated monitor (OSD Orientation Horz): the view is turned 90
+    input      [11:0] hdmi_w,          // HDMI output size (sys HDMI_WIDTH / HDMI_HEIGHT, 0 = unknown / direct video):
+    input      [11:0] hdmi_h,          // the view is built small enough for the scaler to show it whole
     output            avail,           // this game has artwork
 
     input             ioctl_download,
     input       [7:0] ioctl_index,
     input             ioctl_wr,
-    input      [24:0] ioctl_addr,
+    input      [26:0] ioctl_addr,      // hps_io's full 27 bits: the artwork download can pass 32 MB
     input       [7:0] ioctl_dout,
     output            ioctl_wait,
 
@@ -69,7 +72,7 @@ module artwork #(parameter [7:0] IDX = 8'd5)   // ioctl index of the artwork dow
     output            DDRAM_WE
 );
 
-localparam [28:0] BLOB_W = 29'h07000000;      // word addresses (byte >> 3); 38000000-39FFFFFF is unused by Main_MiSTer
+localparam [28:0] BLOB_W = 29'h07000000;      // word addresses (byte >> 3); 38000000-3BFFFFFF is unused by Main_MiSTer
 localparam [28:0] S_W    = 29'h06200000;
 localparam [28:0] FB0_W  = 29'h06600000;
 localparam [28:0] N_W    = 29'h06C00000;
@@ -144,20 +147,20 @@ wire [4:0] e_wr = (est == E_WDATA || est == E_WPRIME) ? (5'd1 << ecur) : 5'd0;
 wire        dl5    = ioctl_download && ioctl_index == IDX;
 reg         old_dl5 = 1'b0;
 reg         blob_ok = 1'b0;
-wire        hdr_wr = ioctl_wr && ioctl_index == IDX && ioctl_addr < 25'd1024;
-wire        blb_wr = ioctl_wr && ioctl_index == IDX && ioctl_addr >= 25'd1024;
-wire [24:0] boff   = 25'(ioctl_addr - 25'd1024);
+wire        hdr_wr = ioctl_wr && ioctl_index == IDX && ioctl_addr < 27'd2048;
+wire        blb_wr = ioctl_wr && ioctl_index == IDX && ioctl_addr >= 27'd2048;
+wire [25:0] boff   = 26'(ioctl_addr - 27'd2048);
 
-wire  [9:0] hdr_ra;
+wire [10:0] hdr_ra;
 wire  [7:0] hdr_q;
-dpram_dc #(.widthad_a(10)) hdr
+dpram_dc #(.widthad_a(11)) hdr
 (
-    .clock_a(clk), .address_a(ioctl_addr[9:0]), .data_a(ioctl_dout), .wren_a(hdr_wr), .q_a(),
-    .clock_b(clk), .address_b(hdr_ra), .q_b(hdr_q)
+    .clock_a(clk), .address_a(ioctl_addr[10:0]), .data_a(ioctl_dout), .wren_a(hdr_wr), .q_a(),
+    .clock_b(clk), .address_b(hdr_ra), .data_b('0), .wren_b(1'b0), .q_b(hdr_q)
 );
 
 reg  [63:0] bw_acc, bw_word;
-reg  [24:0] bw_last;
+reg  [25:0] bw_last;
 reg         bw_dirty = 1'b0;
 assign      w_wdata = bw_word;
 assign      ioctl_wait = w_req;
@@ -168,7 +171,7 @@ reg   [2:0] kst = K_MARK;
 reg   [1:0] kcnt;
 reg  [31:0] klen, ktype;
 reg   [4:0] kid;
-reg  [24:0] img_off[32];
+reg  [25:0] img_off[32];
 reg  [31:0] img_ok = 32'd0;
 
 always @(posedge clk) begin
@@ -182,7 +185,7 @@ always @(posedge clk) begin
         bw_last <= boff;
         if (boff[2:0] == 3'd7) begin
             bw_word <= {ioctl_dout, bw_acc[55:0]};
-            w_addr <= BLOB_W + {7'd0, boff[24:3]}; w_req <= 1'b1;
+            w_addr <= BLOB_W + {6'd0, boff[25:3]}; w_req <= 1'b1;
             bw_dirty <= 1'b0;
         end
         // scanner
@@ -205,7 +208,7 @@ always @(posedge clk) begin
         blob_ok <= 1'b1;
         if (bw_dirty) begin   // last partial word
             bw_word <= bw_acc;
-            w_addr <= BLOB_W + {7'd0, bw_last[24:3]}; w_req <= 1'b1;
+            w_addr <= BLOB_W + {6'd0, bw_last[25:3]}; w_req <= 1'b1;
             bw_dirty <= 1'b0;
         end
     end
@@ -216,7 +219,7 @@ end
 reg         rd_go = 1'b0;           // one clock: start
 reg         rd_smode;               // 0 = PNG bytes from rd_off, 1 = S rect rows (Q or M by rd_mq)
 reg         rd_mq;
-reg  [24:0] rd_off;
+reg  [25:0] rd_off;
 reg         rd_run = 1'b0, rd_stop = 1'b0;
 reg   [5:0] r_wp, r_rp, r_ip;       // written / read / issued (32-entry ring, 6-bit pointers)
 reg   [5:0] r_base;
@@ -228,7 +231,7 @@ wire  [4:0] ring_ra = r_rp[4:0];   // next word to read, presented ahead
 dpram_dc #(.widthad_a(5), .width_a(64)) rring
 (
     .clock_a(clk), .address_a(5'(r_base + ebeat[5:0])), .data_a(DDRAM_DOUT), .wren_a(e_rd[4]), .q_a(),
-    .clock_b(clk), .address_b(ring_ra), .q_b(ring_q)
+    .clock_b(clk), .address_b(ring_ra), .data_b('0), .wren_b(1'b0), .q_b(ring_q)
 );
 
 reg  [11:0] v_cw, v_ch, v_sx, v_sy, v_sw, v_sh, v_nw, v_nh;   // view geometry (as drawn: after view rotation)
@@ -264,7 +267,7 @@ always @(posedge clk) begin
     if (rd_go) begin
         rd_run <= 1'b1;
         r_wp <= 6'd0; r_rp <= 6'd0; r_ip <= 6'd0; r_wv <= 1'b0; r_pend <= 1'b0; r_first <= 1'b1;
-        r_addr <= BLOB_W + {7'd0, rd_off[24:3]};
+        r_addr <= BLOB_W + {6'd0, rd_off[25:3]};
         r_col <= 12'd0; r_row <= 12'd0;
         r_bi <= rd_smode ? 3'd0 : rd_off[2:0];
     end
@@ -310,20 +313,22 @@ png_decode png
     .px_valid(png_px_valid), .px_x(), .px_y(), .px_rgba(png_px), .px_ready(pm1_free)
 );
 
-// two stages: alpha x colour alpha (or mask luminance), then colour x alpha
+// two stages: alpha x colour alpha (or mask luminance), then colour x alpha (mask: luminance x colour alpha,
+// on the red multiplier: MAME scales an alphafile by the item's colour alpha)
 reg         pm1_valid = 1'b0;
 reg  [31:0] pm1_px;
 wire        pm2_free = !pm_valid || res_in_ready;
 wire        pm1_free = !pm1_valid || pm2_free;
 wire  [7:0] lum = 8'((png_px[31:24] * 16'd57 + png_px[23:16] * 16'd181 + png_px[15:8] * 16'd18) >> 8);
+wire  [7:0] pm2_r = div255(((l_op == 3'd4) ? l_ca : pm1_px[31:24]) * pm1_px[7:0]);
 always @(posedge clk) begin
     if (png_rst) begin pm_valid <= 1'b0; pm1_valid <= 1'b0; end
     else begin
         if (pm_valid && res_in_ready) pm_valid <= 1'b0;
         if (pm1_valid && pm2_free) begin
             pm_valid <= 1'b1; pm1_valid <= 1'b0;
-            pm_px <= (l_op == 3'd4) ? pm1_px :
-                     {div255(pm1_px[31:24] * pm1_px[7:0]), div255(pm1_px[23:16] * pm1_px[7:0]), div255(pm1_px[15:8] * pm1_px[7:0]), pm1_px[7:0]};
+            pm_px <= (l_op == 3'd4) ? {24'd0, pm2_r} :
+                     {pm2_r, div255(pm1_px[23:16] * pm1_px[7:0]), div255(pm1_px[15:8] * pm1_px[7:0]), pm1_px[7:0]};
         end
         if (png_px_valid && pm1_free) begin
             pm1_valid <= 1'b1;
@@ -384,7 +389,7 @@ reg         bc_we;
 dpram_dc #(.widthad_a(6), .width_a(64)) bcbuf
 (
     .clock_a(clk), .address_a(e_rd[3] ? ebeat[5:0] : bc_wa[5:0]), .data_a(e_rd[3] ? DDRAM_DOUT : bc_wd), .wren_a(e_rd[3] | bc_we), .q_a(),
-    .clock_b(clk), .address_b(bst == B_WR ? wb_nxt[5:0] : b_i[5:0]), .q_b(bc_q)
+    .clock_b(clk), .address_b(bst == B_WR ? wb_nxt[5:0] : b_i[5:0]), .data_b('0), .wren_b(1'b0), .q_b(bc_q)
 );
 assign b_wdata = fill ? S_INIT : bc_q;
 assign res_ready  = (bst == B_POS && !fill && b_out) || bst == B_C;
@@ -468,45 +473,122 @@ reg        frame_start = 1'b0, frame_end = 1'b0, vbl_rise = 1'b0, line_inc = 1'b
 wire       act_px = !hblank_in && !vblank_in;
 // line of the pixel being captured: a board may drop vblank on the frame's first pixel (Centipede), before gy_c resets
 wire [4:0] gy_w   = old_vbl ? 5'd0 : gy_c[4:0];
-// rotated games: the whole frame as 5-bit colour codes, 8 pixels a word, double-buffered at {buffer, index / 8}
-// (2 x 7680 words for 256 x 240). Each frame's first 32 colours get codes (a frame with more draws the rest as the
-// 32nd); the boards here show at most 32 at once.
+// rotated games: the whole frame as CODE_BITS-bit colour codes, 8 pixels a word, double-buffered at {buffer, index / 8}
+// (2 x 8064 words for 288 x 224). Each frame's first 2^CODE_BITS colours get codes (a frame with more draws the rest as
+// the last code). CODE_BITS 5: 32 parallel comparators, palette in registers. 6-8: hashed RGB -> code table (linear
+// probing, cleared in vblank) and a palette RAM; needs >= 8 clocks per pixel (one lookup takes up to 7).
+localparam int CB = CODE_BITS, NC = 1 << CODE_BITS, WW = 8 * CODE_BITS;
 reg  [15:0] cap_i = 16'd0, cap_tot = 16'd0;   // pixel index in the frame, pixels in the last frame
 reg         cap_buf = 1'b0;
-reg  [39:0] cap_acc;
-reg  [23:0] cpal[64];                // colour of code n in buffer b: {b, n}
-reg   [5:0] cpal_n = 6'd0;           // codes in use in the frame being captured
-reg  [31:0] cpal_hit;
-integer     ci;
-always @* for (ci = 0; ci < 32; ci = ci + 1) cpal_hit[ci] = ci < cpal_n && cpal[{cap_buf, 5'(ci)}] == rgb_in;
-reg   [4:0] hit_code;                // codes are unique, so at most one hit: OR of the hit indices
-always @* begin
-    hit_code = 5'd0;
-    for (ci = 0; ci < 32; ci = ci + 1) if (cpal_hit[ci]) hit_code = hit_code | 5'(ci);
-end
-wire        cpal_new = cpal_hit == 32'd0 && !cpal_n[5];
-wire  [4:0] cap_px  = cpal_hit != 32'd0 ? hit_code : cpal_n[5] ? 5'd31 : cpal_n[4:0];
+reg  [WW-1:0] cap_acc;
+reg    [CB:0] cpal_n = '0;           // codes in use in the frame being captured
+wire          cap_put;               // the code of the next pixel in raster order is ready
+wire [CB-1:0] cap_code;
 wire        cap_vbr = ce_pix && vblank_in && !old_vbl;
-wire        cap_wr  = rot ? (ce_pix && act_px && cap_i[2:0] == 3'd7) || (cap_vbr && cap_i[2:0] != 3'd0) : ce_pix && act_px;
-wire [39:0] gr_qw;
+wire        cap_wr  = rot ? (cap_put && cap_i[2:0] == 3'd7) || (cap_vbr && cap_i[2:0] != 3'd0) : ce_pix && act_px;
+wire [WW-1:0] gr_qw;
 reg  [13:0] gr_ra;
 reg   [2:0] gr_sub;                 // rotated: pixel within the word read
-dpram_dc #(.widthad_a(14), .width_a(40)) gring
+dpram_dc #(.widthad_a(14), .width_a(WW)) gring
 (
     .clock_a(clk), .address_a(rot ? {cap_buf, cap_i[15:3]} : {gy_w, gx_c[8:0]}),
-    .data_a(rot ? (act_px ? {cap_px, cap_acc[34:0]} : cap_acc) : {16'd0, rgb_in}), .wren_a(cap_wr), .q_a(),
-    .clock_b(clk), .address_b(gr_ra), .q_b(gr_qw)
+    .data_a(rot ? (cap_put ? {cap_code, cap_acc[WW-CB-1:0]} : cap_acc) : {{(WW-24){1'b0}}, rgb_in}), .wren_a(cap_wr), .q_a(),
+    .clock_b(clk), .address_b(gr_ra), .data_b('0), .wren_b(1'b0), .q_b(gr_qw)
 );
-reg         cp_rbuf;                 // buffer the compositor reads (the last whole frame)
-wire  [4:0] gr_code = gr_qw[5 * gr_sub +: 5];
-wire [23:0] gr_q  = rot ? cpal[{cp_rbuf, gr_code}] : gr_qw[23:0];
-always @(posedge clk) if (ce_pix) begin
-    if (act_px) begin
-        cap_acc[5 * cap_i[2:0] +: 5] <= cap_px; cap_i <= cap_i + 16'd1;
-        if (cpal_new) begin cpal[{cap_buf, cpal_n[4:0]}] <= rgb_in; cpal_n <= cpal_n + 6'd1; end
-    end
-    if (vblank_in && !old_vbl) begin cap_tot <= cap_i; cap_buf <= ~cap_buf; cap_i <= 16'd0; cpal_n <= 6'd0; end
+reg           cp_rbuf;               // buffer the compositor reads (the last whole frame)
+wire [CB-1:0] gr_code = gr_qw[CB * gr_sub +: CB];
+reg    [23:0] pal2;                  // colour of the stage-1 code, one clock later (compositor stage 2)
+always @(posedge clk) begin
+    if (cap_put) begin cap_acc[CB * cap_i[2:0] +: CB] <= cap_code; cap_i <= cap_i + 16'd1; end
+    if (cap_vbr) begin cap_tot <= cap_i; cap_buf <= ~cap_buf; cap_i <= 16'd0; end
 end
+
+generate if (CODE_BITS == 5) begin : map_cmp
+    reg  [23:0] cpal[64];            // colour of code n in buffer b: {b, n}
+    reg  [31:0] cpal_hit;
+    integer     ci;
+    always @* for (ci = 0; ci < 32; ci = ci + 1) cpal_hit[ci] = ci < cpal_n && cpal[{cap_buf, 5'(ci)}] == rgb_in;
+    reg   [4:0] hit_code;            // codes are unique, so at most one hit: OR of the hit indices
+    always @* begin
+        hit_code = 5'd0;
+        for (ci = 0; ci < 32; ci = ci + 1) if (cpal_hit[ci]) hit_code = hit_code | 5'(ci);
+    end
+    wire        cpal_new = cpal_hit == 32'd0 && !cpal_n[5];
+    assign cap_put  = ce_pix && act_px && rot;
+    assign cap_code = cpal_hit != 32'd0 ? hit_code : cpal_n[5] ? 5'd31 : cpal_n[4:0];
+    always @(posedge clk) begin
+        if (ce_pix && act_px && cpal_new) begin cpal[{cap_buf, cpal_n[4:0]}] <= rgb_in; cpal_n <= cpal_n + 6'd1; end
+        if (cap_vbr) cpal_n <= 6'd0;
+        pal2 <= cpal[{cp_rbuf, gr_code}];
+    end
+end else begin : map_hash
+    // table: 2^(CB+1) buckets of 4 slots (8 slots per code), all 4 compared at once; up to 3 buckets probed
+    localparam int HB = CB + 1, SW = CB + 25;   // bucket address bits, slot = {valid, RGB, code}
+    function [HB-1:0] hash(input [23:0] c);
+        reg [71:0] s; integer k;
+        begin s = {48'd0, c ^ {c[10:0], c[23:11]}}; hash = '0; for (k = 0; k < 24; k = k + HB) hash = hash ^ s[k +: HB]; end
+    endfunction
+    reg  [23:0] m_rgb;
+    reg [HB-1:0] m_h;
+    reg   [1:0] m_try;
+    reg   [1:0] m_st = 2'd0;         // 0 idle, 1 table read in flight, 2 compare
+    reg         m_put = 1'b0;
+    reg [CB-1:0] m_code;
+    reg [HB-1:0] t_wa, clr_a = '0;
+    reg [4*SW-1:0] t_wd;
+    reg         t_we = 1'b0, clr = 1'b1;
+    wire [4*SW-1:0] t_q;
+    dpram_dc #(.widthad_a(HB), .width_a(4 * SW)) ctab
+    (
+        .clock_a(clk), .address_a(clr ? clr_a : t_wa), .data_a(clr ? '0 : t_wd), .wren_a(clr | t_we), .q_a(),
+        .clock_b(clk), .address_b(m_h), .data_b('0), .wren_b(1'b0), .q_b(t_q)
+    );
+    reg   [3:0] s_hit, s_free;
+    reg [CB-1:0] s_code;             // code of the hit slot (slots hold unique colours: OR of the hits)
+    reg   [1:0] s_fi;                // first free slot
+    integer     si;
+    always @* begin
+        s_code = '0; s_fi = 2'd0;
+        for (si = 0; si < 4; si = si + 1) begin
+            s_hit[si]  = t_q[SW * si + SW - 1] && t_q[SW * si + CB +: 24] == m_rgb;
+            s_free[si] = !t_q[SW * si + SW - 1];
+            if (s_hit[si]) s_code = s_code | t_q[SW * si +: CB];
+        end
+        for (si = 3; si >= 0; si = si - 1) if (s_free[si]) s_fi = 2'(si);
+    end
+    reg         p_we = 1'b0;
+    reg [CB-1:0] p_wa;
+    wire [23:0] p_q;
+    dpram_dc #(.widthad_a(CB + 1), .width_a(24)) cpal
+    (
+        .clock_a(clk), .address_a({cap_buf, p_wa}), .data_a(m_rgb), .wren_a(p_we), .q_a(),
+        .clock_b(clk), .address_b({cp_rbuf, gr_code}), .data_b('0), .wren_b(1'b0), .q_b(p_q)
+    );
+    always @* pal2 = p_q;
+    assign cap_put  = m_put;
+    assign cap_code = m_code;
+    always @(posedge clk) begin
+        t_we <= 1'b0; p_we <= 1'b0; m_put <= 1'b0;
+        if (clr) begin clr_a <= clr_a + 1'd1; if (&clr_a) clr <= 1'b0; end
+        if (cap_vbr) begin clr <= 1'b1; clr_a <= '0; cpal_n <= '0; end   // a fresh code set every frame
+        case (m_st)
+            2'd0: if (ce_pix && act_px && rot) begin m_rgb <= rgb_in; m_h <= hash(rgb_in); m_try <= 2'd0; m_st <= 2'd1; end
+            2'd1: m_st <= 2'd2;      // slot m_h is read this clock
+            default: begin
+                m_st <= 2'd0;
+                if (s_hit != 4'd0) begin m_code <= s_code; m_put <= 1'b1; end
+                else if (s_free != 4'd0 || m_try == 2'd2) begin  // a free slot (or 3 full buckets): a new code, if any is left
+                    m_put <= 1'b1;
+                    if (s_free != 4'd0 && !cpal_n[CB]) begin
+                        m_code <= cpal_n[CB-1:0]; cpal_n <= cpal_n + 1'd1;
+                        t_wa <= m_h; t_wd <= t_q; t_wd[SW * s_fi +: SW] <= {1'b1, m_rgb, cpal_n[CB-1:0]}; t_we <= 1'b1;
+                        p_wa <= cpal_n[CB-1:0]; p_we <= 1'b1;
+                    end else m_code <= {CB{1'b1}};
+                end else begin m_h <= m_h + 1'd1; m_try <= m_try + 2'd1; m_st <= 2'd1; end
+            end
+        endcase
+    end
+end endgenerate
 
 wire [63:0] nb_q;
 reg   [8:0] nb_x;                   // prefetch: first column of the burst
@@ -514,7 +596,7 @@ reg         nb_half;
 dpram_dc #(.widthad_a(10), .width_a(64)) nbuf
 (
     .clock_a(clk), .address_a({nb_half, 9'(nb_x + {1'b0, ebeat})}), .data_a(DDRAM_DOUT), .wren_a(e_rd[0]), .q_a(),
-    .clock_b(clk), .address_b({vblank_in ? 1'b0 : gy_c[0], crt_flip ? 9'(v_nw - 12'd1 - {3'd0, gx_c}) : gx_c[8:0]}), .q_b(nb_q)
+    .clock_b(clk), .address_b({vblank_in ? 1'b0 : gy_c[0], crt_flip ? 9'(v_nw - 12'd1 - {3'd0, gx_c}) : gx_c[8:0]}), .data_b('0), .wren_b(1'b0), .q_b(nb_q)
 );
 
 reg  run = 1'b0;
@@ -600,11 +682,11 @@ reg [23:0] dv_rem;                   // per-row game line: (row offset * NH) / S
 reg  [8:0] dv_q;
 reg  [3:0] dv_b = 4'd0;
 reg [11:0] dv_o;
-reg  [6:0] cp_n, cp_i, cp_i1, cp_i2;
+reg  [6:0] cp_n, cp_i, cp_i1, cp_i2, cp_i3;
 reg  [6:0] cp_got;                   // S words of this chunk already in ccbuf (written the clock before)
-reg        cp_v1, cp_v2;
-reg [23:0] g2;                       // stage 2: game pixel and S word, registered (the colour-code lookup is slow)
-reg [63:0] cc2;
+reg        cp_v1, cp_v2, cp_v3;
+reg [23:0] g2, g3;                   // stage 2: raw ring pixel (pal2 = its code's colour); stage 3: game pixel
+reg [63:0] cc2, cc3;                 // S word, stages 2 / 3
 reg  [1:0] cp_buf;
 reg [31:0] cp_lo;
 wire [63:0] cc_q;
@@ -618,13 +700,13 @@ wire [11:0] fb_x   = fbf ? v_cw - cp_x - {5'd0, cp_n} : cp_x;
 dpram_dc #(.widthad_a(6), .width_a(64)) ccbuf
 (
     .clock_a(clk), .address_a(ebeat[5:0]), .data_a(DDRAM_DOUT), .wren_a(e_rd[1]), .q_a(),
-    .clock_b(clk), .address_b(cp_i[5:0]), .q_b(cc_q)
+    .clock_b(clk), .address_b(cp_i[5:0]), .data_b('0), .wren_b(1'b0), .q_b(cc_q)
 );
 wire [63:0] cw_q;
 dpram_dc #(.widthad_a(5), .width_a(64)) cwbuf
 (
     .clock_a(clk), .address_a(cw_a), .data_a(cw_d), .wren_a(cw_we), .q_a(),
-    .clock_b(clk), .address_b(wb_nxt[4:0]), .q_b(cw_q)
+    .clock_b(clk), .address_b(wb_nxt[4:0]), .data_b('0), .wren_b(1'b0), .q_b(cw_q)
 );
 assign k_wdata = cw_q;
 // rotated: frame index of the game pixel (picture unflipped; the board rotates it 180 for CRT Flip)
@@ -633,7 +715,7 @@ wire [15:0] cp_pf = crt_flip ? 16'(cap_tot - 16'd1 - cp_p[15:0]) : cp_p[15:0];
 always @* gr_ra = rot ? {cp_rbuf, cp_pf[15:3]} : {cp_k[4:0], crt_flip ? 9'(v_nw - 12'd1 - {3'd0, cp_gx}) : cp_gx[8:0]};
 always @(posedge clk) gr_sub <= cp_pf[2:0];
 
-wire [31:0] cpx = {8'd0, comp(g2[7:0], cc2[23:16], cc2[55:48]), comp(g2[15:8], cc2[15:8], cc2[47:40]), comp(g2[23:16], cc2[7:0], cc2[39:32])};
+wire [31:0] cpx = {8'd0, comp(g3[7:0], cc3[23:16], cc3[55:48]), comp(g3[15:8], cc3[15:8], cc3[47:40]), comp(g3[23:16], cc3[7:0], cc3[39:32])};
 
 always @(posedge clk) begin
     cw_we <= 1'b0;
@@ -690,13 +772,15 @@ always @(posedge clk) begin
             k_addr <= S_W + {6'd0, cp_row[10:0], 11'd0} + {17'd0, cp_x};
             k_len <= (cp_xend - cp_x > 12'd64) ? 8'd64 : 8'(cp_xend - cp_x);
             k_we <= 1'b0; k_req <= 1'b1;
-            cp_i <= 7'd0; cp_v1 <= 1'b0; cp_v2 <= 1'b0; cp_got <= 7'd0;
+            cp_i <= 7'd0; cp_v1 <= 1'b0; cp_v2 <= 1'b0; cp_v3 <= 1'b0; cp_got <= 7'd0;
             cst <= C_CALC;                 // compute while the burst arrives (40 MHz: a serial read-then-calc misses the raster)
         end
         C_CALC: begin
-            // address pixel cp_i (S word + game pixel) once its word has landed, register pixel cp_i1, compute pixel cp_i2
+            // address pixel cp_i (S word + game pixel) once its word has landed, register pixel cp_i1 (and read its code's
+            // colour), take the colour for pixel cp_i2, compute pixel cp_i3
             cp_v1 <= cp_i < cp_n && cp_i < cp_got; cp_i1 <= cp_i;
-            cp_v2 <= cp_v1; cp_i2 <= cp_i1; g2 <= in_rect ? gr_q : 24'd0; cc2 <= cc_q;
+            cp_v2 <= cp_v1; cp_i2 <= cp_i1; g2 <= gr_qw[23:0]; cc2 <= cc_q;
+            cp_v3 <= cp_v2; cp_i3 <= cp_i2; g3 <= !in_rect ? 24'd0 : rot ? pal2 : g2; cc3 <= cc2;
             if (cp_i < cp_n && cp_i < cp_got) begin
                 cp_i <= cp_i + 7'd1;
                 if (cp_hacc + {12'd0, v_gw} >= {12'd0, v_sw}) begin
@@ -705,13 +789,13 @@ always @(posedge clk) begin
                 end
                 else cp_hacc <= cp_hacc + {12'd0, v_gw};
             end
-            if (cp_v2) begin
-                if (!cp_i2[0]) cp_lo <= cpx;
+            if (cp_v3) begin
+                if (!cp_i3[0]) cp_lo <= cpx;
                 else begin                // framebuffer rotated 180: words in reverse order, pixels swapped
-                    cw_a <= fbf ? 5'(cp_n[6:1] - 6'd1 - {1'b0, cp_i2[5:1]}) : cp_i2[5:1];
+                    cw_a <= fbf ? 5'(cp_n[6:1] - 6'd1 - {1'b0, cp_i3[5:1]}) : cp_i3[5:1];
                     cw_d <= fbf ? {cp_lo, cpx} : {cpx, cp_lo}; cw_we <= 1'b1;
                 end
-                if (cp_i2 == cp_n - 7'd1) begin cp_buf <= 2'd0; cst <= C_WR; end
+                if (cp_i3 == cp_n - 7'd1) begin cp_buf <= 2'd0; cst <= C_WR; end
             end
         end
         C_WR: begin
@@ -743,34 +827,73 @@ end
 
 // =================================================================== sequencer
 
-localparam Q_IDLE = 4'd0, Q_GLOB = 4'd1, Q_VIEW = 4'd2, Q_CLEAR = 4'd3, Q_LREC = 4'd4, Q_LGO = 4'd5, Q_LRUN = 4'd6,
-           Q_LEND = 4'd7, Q_NAT = 4'd8, Q_NRUN = 4'd9, Q_INIT = 4'd10, Q_IRUN = 4'd11, Q_RUN = 4'd12, Q_STOP = 4'd13;
-reg   [3:0] qst = Q_IDLE;
+localparam Q_IDLE = 5'd0, Q_GLOB = 5'd1, Q_VIEW = 5'd2, Q_CLEAR = 5'd3, Q_LREC = 5'd4, Q_LGO = 5'd5, Q_LRUN = 5'd6,
+           Q_LEND = 5'd7, Q_NAT = 5'd8, Q_NRUN = 5'd9, Q_INIT = 5'd10, Q_IRUN = 5'd11, Q_RUN = 5'd12, Q_STOP = 5'd13,
+           Q_FIT = 5'd14, Q_VSCL = 5'd15, Q_VSET = 5'd16, Q_LSCL = 5'd17, Q_LSET = 5'd18;
+reg   [4:0] qst = Q_IDLE;
 reg   [7:0] rec[16];
 reg   [4:0] rk;                      // record byte being fetched (+1 latency)
-reg   [9:0] rbase;
+reg  [10:0] rbase;
 reg         rbusy = 1'b0;
-assign      hdr_ra = rbase + {5'd0, rk};
+assign      hdr_ra = rbase + {6'd0, rk};
 reg  [10:0] cur_cfg;
-wire [10:0] cfg = {1'b0, turn, fbf, side_off, layer_off, sel};
+wire [10:0] cfg = {turn, fbf, side_off, layer_off, sel};
 assign      avail = blob_ok && img_ok != 32'd0;   // zip missing on the SD card: only the table came, no artwork
-reg   [5:0] l_cur, l_end;
+reg   [6:0] l_cur, l_end;
 reg   [7:0] n_views;
 reg         n_pass;
 reg  [27:0] wdog;
 
+// HDMI fit: ascal cannot shrink a framebuffer horizontally (a canvas wider / taller than the output is cropped), so the
+// view is built at q / 256 of the table's size: the largest q <= 256 whose canvas fits the output, but never below the q
+// that keeps the screen rect 2 pixels over the game's native size. One shared multiplier, binary searches over q.
+reg  [11:0] hw_s1 = 12'd0, hw_s2 = 12'd0, hh_s1 = 12'd0, hh_s2 = 12'd0;
+always @(posedge clk) begin hw_s1 <= hdmi_w; hw_s2 <= hw_s1; hh_s1 <= hdmi_h; hh_s2 <= hh_s1; end
+reg  [23:0] cur_hd;
+reg  [11:0] t_cw, t_ch, t_sx, t_sy, t_sw, t_sh;   // view record from the table (unscaled)
+reg   [8:0] f_q, f_fit;                           // search result so far, the fit's q
+reg   [8:0] t_qf = 9'd1;                         // view L0 high byte + 1: smallest q keeping every PNG within 15x downscale
+reg   [3:0] f_b;                                  // search bit
+reg   [2:0] f_k;                                  // step
+reg         f_min;                                // search 0: largest q fitting the output, 1: largest q too small
+reg  [20:0] f_p0;
+reg  signed [14:0] m_a;
+reg   [8:0] m_b;
+wire signed [24:0] m_p  = m_a * $signed({1'b0, m_b});
+wire signed [16:0] m_sc = 17'((m_p + 25'sd128) >>> 8);                    // round(v * q / 256)
+wire [11:0] m_ev = 12'(((m_p + 25'sd256) >>> 9) << 1);                    // the same, rounded to even
+reg         s_ox, s_oy;                           // view shifted one pixel / row so the screen starts even
+reg  signed [16:0] sl_a;                           // scaled left / top edge
+reg  signed [14:0] s_x, s_y, s_x2;                // layer rect, scaled
+reg  [11:0] s_w, s_h, s_w2;
+reg  [11:0] a_cw, a_ch;
+// drawn (after the view rotation) canvas / screen size and the game picture as drawn
+wire [11:0] d_cw = (vw_rot != 2'd0) ? t_ch : t_cw, d_ch = (vw_rot != 2'd0) ? t_cw : t_ch;
+wire [11:0] d_sw = (vw_rot != 2'd0) ? t_sh : t_sw, d_sh = (vw_rot != 2'd0) ? t_sw : t_sh;
+wire  [8:0] f_c  = f_q | (9'd1 << f_b);
+wire        f_ok = f_min ? (f_p0 < {1'b0, 12'(v_gw + 12'd2), 8'd0} || m_p[20:0] < {1'b0, 12'(v_gh + 12'd2), 8'd0})
+                         : (f_p0 <= {1'b0, hw_s2, 8'd0} && m_p[20:0] <= {1'b0, hh_s2, 8'd0});
+wire  [8:0] f_fin = f_ok ? f_c : f_q;
+wire  [9:0] f_qmin = {1'b0, f_fin} + 10'd1;
+wire  [9:0] f_flr = (f_qmin > {1'b0, t_qf}) ? f_qmin : {1'b0, t_qf};      // floor: native game size, PNG downscale
+wire  [8:0] f_sel = (f_flr > {1'b0, f_fit}) ? ((f_flr > 10'd256) ? 9'd256 : f_flr[8:0]) : f_fit;
+wire        chg   = cfg != cur_cfg || {hh_s2, hw_s2} != cur_hd;          // rebuild: OSD settings or HDMI size changed
+
 wire [15:0] r16_0 = {rec[1], rec[0]},  r16_1 = {rec[3], rec[2]},  r16_2 = {rec[5], rec[4]},  r16_3 = {rec[7], rec[6]};
 // layer rect: side art (flag bit 4) uses its alternate x / width and the screen's rows when bezels are off
 wire        l_alt = cur_cfg[6] && rec[2][4];
-wire signed [14:0] lr_x  = l_alt ? $signed({rec[13][6:0], rec[12]}) : $signed({rec[5][6:0], rec[4]});
-wire signed [14:0] lr_y  = l_alt ? $signed({3'b000, u_sy}) : $signed({rec[7][6:0], rec[6]});
-wire        [11:0] lr_w  = l_alt ? {rec[15][3:0], rec[14]} : {rec[9][3:0], rec[8]};
-wire        [11:0] lr_h  = l_alt ? u_sh : {rec[11][3:0], rec[10]};
+// record fields (table scale) and the rect as drawn (scaled by Q_LSCL)
+wire signed [14:0] r_x  = $signed({rec[5][6:0], rec[4]}), r_y = $signed({rec[7][6:0], rec[6]}), r_x2 = $signed({rec[13][6:0], rec[12]});
+wire        [11:0] r_w  = {rec[9][3:0], rec[8]}, r_h = {rec[11][3:0], rec[10]}, r_w2 = {rec[15][3:0], rec[14]};
+wire signed [14:0] lr_x  = l_alt ? s_x2 : s_x;
+wire signed [14:0] lr_y  = l_alt ? $signed({3'b000, u_sy}) : s_y;
+wire        [11:0] lr_w  = l_alt ? s_w2 : s_w;
+wire        [11:0] lr_h  = l_alt ? u_sh : s_h;
 wire signed [14:0] lr_x1 = lr_x + $signed({3'b000, lr_w}), lr_y1 = lr_y + $signed({3'b000, lr_h});
 // layer rect clipped to the canvas (for the shown area)
 wire [11:0] lc_x0 = lr_x < 0 ? 12'd0 : lr_x[11:0], lc_y0 = lr_y < 0 ? 12'd0 : lr_y[11:0];
 wire [11:0] lc_x1 = lr_x1 > $signed({3'b000, u_cw}) ? u_cw : lr_x1[11:0], lc_y1 = lr_y1 > $signed({3'b000, u_ch}) ? u_ch : lr_y1[11:0];
-wire        l_draw = (rec[2][6] || img_ok[rec[1][4:0]]) && !cur_cfg[4 + rec[2][3:2]] && !(cur_cfg[7] && rec[2][5]);
+wire        l_draw = (rec[2][6] || img_ok[rec[1][4:0]]) && !cur_cfg[4 + rec[2][3:2]] && !(cur_cfg[8] && rec[2][5]);
 wire [15:0] r16_4 = {rec[9], rec[8]},  r16_5 = {rec[11], rec[10]}, r16_6 = {rec[13], rec[12]}, r16_7 = {rec[15], rec[14]};
 
 assign ddr_owner = qst != Q_IDLE || est != E_IDLE || c_req != 5'd0;
@@ -794,7 +917,7 @@ always @(posedge clk) begin
         Q_IDLE: begin
             bl_abort <= 1'b0;
             if (avail && sel != 4'd0 && !rbusy) begin
-                cur_cfg <= cfg; rbase <= 10'd0; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_GLOB;
+                cur_cfg <= cfg; cur_hd <= {hh_s2, hw_s2}; rbase <= 11'd0; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_GLOB;
             end
         end
         Q_GLOB: if (!rbusy && !(rk == 5'd0)) begin
@@ -802,35 +925,78 @@ always @(posedge clk) begin
             else begin
                 v_nw <= r16_3[11:0]; v_nh <= r16_4[11:0];
                 // turned: ROT270 layout CW and ROT90 CCW (the game is then the native raster), horizontal CW (game as ROT90)
-                v_rot  <= !cur_cfg[9] ? rec[10][1:0] : (rec[10][1:0] == 2'd0) ? 2'd2 : 2'd0;
-                vw_rot <= !cur_cfg[9] ? 2'd0 : (rec[10][1:0] == 2'd2) ? 2'd1 : 2'd2;
-                rbase <= 10'd16 + {2'd0, 4'(cur_cfg[3:0] - 4'd1), 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_VIEW;
+                v_rot  <= !cur_cfg[10] ? rec[10][1:0] : (rec[10][1:0] == 2'd0) ? 2'd2 : 2'd0;
+                vw_rot <= !cur_cfg[10] ? 2'd0 : (rec[10][1:0] == 2'd2) ? 2'd1 : 2'd2;
+                rbase <= 11'd16 + {3'd0, 4'(cur_cfg[3:0] - 4'd1), 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_VIEW;
             end
         end
         Q_VIEW: if (!rbusy) begin
-            u_cw <= r16_0[11:0]; u_ch <= r16_1[11:0]; u_sx <= r16_2[11:0]; u_sy <= r16_3[11:0];
-            u_sw <= r16_4[11:0]; u_sh <= r16_5[11:0];
+            t_cw <= r16_0[11:0]; t_ch <= r16_1[11:0]; t_sx <= r16_2[11:0]; t_sy <= r16_3[11:0];
+            t_sw <= r16_4[11:0]; t_sh <= r16_5[11:0];
+            l_cur <= r16_6[6:0]; l_end <= 7'(r16_6[6:0] + r16_7[6:0]); t_qf <= {1'b0, rec[13]} + 9'd1;
+            // HDMI size unknown (direct video): no fit search, only the native-size floor
+            f_q <= 9'd0; f_b <= 4'd8; f_k <= 3'd0; f_fit <= 9'd256; f_min <= hw_s2 == 12'd0 || hh_s2 == 12'd0;
+            qst <= Q_FIT;
+        end
+        Q_FIT: begin                                        // per q bit: two products, then keep the bit if f_ok
+            case (f_k)
+                3'd0: begin m_a <= $signed({3'b000, f_min ? d_sw : d_cw}); m_b <= f_c; f_k <= 3'd1; end
+                3'd1: begin f_p0 <= m_p[20:0]; m_a <= $signed({3'b000, f_min ? d_sh : d_ch}); f_k <= 3'd2; end
+                default: begin
+                    f_k <= 3'd0;
+                    if (f_b != 4'd0) begin f_q <= f_fin; f_b <= f_b - 4'd1; end
+                    else if (!f_min) begin f_fit <= (f_fin > 9'd256) ? 9'd256 : f_fin; f_min <= 1'b1; f_q <= 9'd0; f_b <= 4'd8; end
+                    else begin m_b <= f_sel; m_a <= $signed({3'b000, t_sx}); qst <= Q_VSCL; end
+                end
+            endcase
+        end
+        Q_VSCL: begin                                       // view at q / 256; screen x / y, sizes and canvas kept even
+            f_k <= f_k + 3'd1;
+            case (f_k)
+                3'd0: begin s_ox <= m_sc[0]; u_sx <= 12'(m_sc[11:0] - {11'd0, m_sc[0]}); m_a <= $signed({3'b000, t_sy}); end
+                3'd1: begin s_oy <= m_sc[0]; u_sy <= 12'(m_sc[11:0] - {11'd0, m_sc[0]}); m_a <= $signed({3'b000, t_cw}); end
+                3'd2: begin a_cw <= m_sc[11:0]; m_a <= $signed({3'b000, t_ch}); end
+                3'd3: begin a_ch <= m_sc[11:0]; m_a <= $signed({3'b000, t_sw}); end
+                3'd4: begin u_sw <= m_ev; m_a <= $signed({3'b000, t_sh}); end
+                default: begin
+                    u_sh <= m_ev;
+                    u_cw <= (a_cw - {11'd0, s_ox} + 12'd1) & ~12'd1; u_ch <= (a_ch - {11'd0, s_oy} + 12'd1) & ~12'd1;
+                    qst <= Q_VSET;
+                end
+            endcase
+        end
+        Q_VSET: begin
             if (vw_rot == 2'd0) begin
-                v_cw <= r16_0[11:0]; v_ch <= r16_1[11:0]; v_sx <= r16_2[11:0]; v_sy <= r16_3[11:0];
-                v_sw <= r16_4[11:0]; v_sh <= r16_5[11:0];
+                v_cw <= u_cw; v_ch <= u_ch; v_sx <= u_sx; v_sy <= u_sy; v_sw <= u_sw; v_sh <= u_sh;
             end else begin                   // turned 90: CW screen x = CH - SY - SH, y = SX; CCW x = SY, y = CW - SX - SW
-                v_cw <= r16_1[11:0]; v_ch <= r16_0[11:0]; v_sw <= r16_5[11:0]; v_sh <= r16_4[11:0];
-                v_sx <= (vw_rot == 2'd2) ? 12'(r16_1[11:0] - r16_3[11:0] - r16_5[11:0]) : r16_3[11:0];
-                v_sy <= (vw_rot == 2'd2) ? r16_2[11:0] : 12'(r16_0[11:0] - r16_2[11:0] - r16_4[11:0]);
+                v_cw <= u_ch; v_ch <= u_cw; v_sw <= u_sh; v_sh <= u_sw;
+                v_sx <= (vw_rot == 2'd2) ? 12'(u_ch - u_sy - u_sh) : u_sy;
+                v_sy <= (vw_rot == 2'd2) ? u_sx : 12'(u_cw - u_sx - u_sw);
             end
-            k_x0 <= r16_2[11:0]; k_y0 <= r16_3[11:0]; k_x1 <= r16_2[11:0] + r16_4[11:0]; k_y1 <= r16_3[11:0] + r16_5[11:0];
-            l_cur <= r16_6[5:0]; l_end <= 6'(r16_6[5:0] + r16_7[5:0]);
+            k_x0 <= u_sx; k_y0 <= u_sy; k_x1 <= u_sx + u_sw; k_y1 <= u_sy + u_sh;
             // clear S (canvas as drawn)
             l_op <= 3'd7; l_rect <= 1'b0; bl_nplane <= 1'b0; bl_rot <= 2'd0; bl_x <= 14'sd0; bl_y <= 14'sd0;
-            if (vw_rot == 2'd0) begin bl_w <= r16_0[11:0]; bl_h <= r16_1[11:0]; bl_cw <= r16_0[11:0]; bl_ch <= r16_1[11:0]; end
-            else begin bl_w <= r16_1[11:0]; bl_h <= r16_0[11:0]; bl_cw <= r16_1[11:0]; bl_ch <= r16_0[11:0]; end
+            if (vw_rot == 2'd0) begin bl_w <= u_cw; bl_h <= u_ch; bl_cw <= u_cw; bl_ch <= u_ch; end
+            else begin bl_w <= u_ch; bl_h <= u_cw; bl_cw <= u_ch; bl_ch <= u_cw; end
             bl_go <= 1'b1; qst <= Q_CLEAR;
         end
         Q_CLEAR: if (!bl_go && bl_done) begin
             if (l_cur == l_end) qst <= Q_NAT;
-            else begin rbase <= 10'd256 + {l_cur, 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_LREC; end
+            else begin rbase <= 11'd256 + {l_cur, 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_LREC; end
         end
-        Q_LREC: if (!rbusy) begin
+        Q_LREC: if (!rbusy) begin m_a <= r_x; f_k <= 3'd0; qst <= Q_LSCL; end
+        Q_LSCL: begin                                       // layer rect at q / 256, edges scaled (neighbours stay joined)
+            f_k <= f_k + 3'd1;
+            case (f_k)
+                3'd0: begin sl_a <= m_sc; s_x <= 15'(m_sc - {16'd0, s_ox}); m_a <= 15'(r_x + $signed({3'b000, r_w})); end
+                3'd1: begin s_w <= 12'(m_sc - sl_a); m_a <= r_y; end
+                3'd2: begin sl_a <= m_sc; s_y <= 15'(m_sc - {16'd0, s_oy}); m_a <= 15'(r_y + $signed({3'b000, r_h})); end
+                3'd3: begin s_h <= 12'(m_sc - sl_a); m_a <= r_x2; end
+                3'd4: begin sl_a <= m_sc; s_x2 <= 15'(m_sc - {16'd0, s_ox}); m_a <= 15'(r_x2 + $signed({3'b000, r_w2})); end
+                default: begin s_w2 <= 12'(m_sc - sl_a); qst <= Q_LSET; end
+            endcase
+        end
+        Q_LSET: begin
             l_op <= rec[0][2:0]; l_ca <= rec[3];
             l_rect <= rec[2][6];             // rect layer: colour {byte 1, byte 12, byte 13}
             rect_px <= {div255(rec[1] * rec[3]), div255(rec[12] * rec[3]), div255(rec[13] * rec[3]), rec[3]};
@@ -857,9 +1023,9 @@ always @(posedge clk) begin
             if (!bl_go && bl_done) begin bl_abort <= 1'b0; rd_stop <= 1'b1; png_rst <= 1'b1; qst <= Q_LEND; end
         end
         Q_LEND: if (!rd_run && !r_req && est == E_IDLE) begin   // reader stopped and its last burst has landed
-            l_cur <= l_cur + 6'd1;
-            if (l_cur + 6'd1 == l_end) begin n_pass <= 1'b0; qst <= Q_NAT; end
-            else begin rbase <= 10'd256 + {6'(l_cur + 6'd1), 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_LREC; end
+            l_cur <= l_cur + 7'd1;
+            if (l_cur + 7'd1 == l_end) begin n_pass <= 1'b0; qst <= Q_NAT; end
+            else begin rbase <= 11'd256 + {7'(l_cur + 7'd1), 4'd0}; rk <= 5'd0; rbusy <= 1'b1; qst <= Q_LREC; end
         end
         Q_NAT: begin                                        // S screen rect -> N plane (Q pass, then M pass)
             rd_smode <= 1'b1; rd_mq <= n_pass; l_rect <= 1'b0;
@@ -877,14 +1043,14 @@ always @(posedge clk) begin
             end
         end
         Q_IRUN: if (!cp_init && cp_idone) begin run <= 1'b1; qst <= Q_RUN; end
-        Q_RUN: if (cfg != cur_cfg) begin run <= 1'b0; qst <= Q_STOP; end
-        Q_STOP: if (cst == C_IDLE && !p_req && !k_req && est == E_IDLE && cfg != cur_cfg) qst <= Q_IDLE;
+        Q_RUN: if (chg) begin run <= 1'b0; qst <= Q_STOP; end
+        Q_STOP: if (cst == C_IDLE && !p_req && !k_req && est == E_IDLE && chg) qst <= Q_IDLE;
         default: qst <= Q_IDLE;
     endcase
 end
 
 `ifdef ART_DEBUG
-reg  [3:0] dbg_q = 4'd0;
+reg  [4:0] dbg_q = 5'd0;
 reg [31:0] dbg_c = 32'd0;
 reg  [4:0] dbg_n = 5'd0;
 always @(posedge clk) begin

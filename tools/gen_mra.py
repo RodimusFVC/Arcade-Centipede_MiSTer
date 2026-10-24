@@ -9,7 +9,8 @@ see vault "MRA switches default keeps only 3 bytes"); the input map points a por
 a control id (1-63, XORed onto the port's idle level).
 
 Release layout: a parent set goes to <releases>/<Title>.mra with the trailing parentheses dropped; a clone goes to
-<releases>/_alternatives/_<Parent Title>/<Full Title>.mra.
+<releases>/_alternatives/_<Parent Title>/<Full Title>.mra. These carry no artwork. A set with MAME artwork also gets
+the same tree under <releases>/_artwork/ with the artwork block (same file name: shares .nvm / .dip with the plain one).
 
 Usage:
     gen_mra.py <driver.cpp> <releases_dir> [set ...]      (no sets: every supported set)
@@ -58,13 +59,15 @@ HISCORE_HEADER_TAIL = "00 FF 00 02 00 02 00 01 11 11 00 00"
 HISCORE_INIT_FRAME = {"warlords": 2, "magworm": 0}
 CLK_PER_FRAME = 384 * 8 * 263                                     # Centipede board, 48.384 MHz
 
-# MAME artwork (rtl/art/artwork.sv): set -> games/mame-artwork/<zip>, used as-is. The MRA sends a 1024-byte layout
+# MAME artwork (rtl/art/artwork.sv): set -> games/mame-artwork/<zip>, used as-is. The MRA sends a 2048-byte layout
 # table (from the zip's default.lay) then each PNG behind an "AWI"+id marker on ioctl index 5. The OSD Artwork page
 # picks the view (View n = the n-th view of default.lay, listed in the MRA) and MAME's layer toggles.
-ARTWORK = {"warlords": "warlords", "ccastles": "ccastles", "centiped": "centiped", "milliped": "milliped"}
+ARTWORK = {"warlords": "warlords", "ccastles": "ccastles", "centiped": "centiped", "milliped": "milliped",
+           "mazeinv": "mazeinv"}
 ART_DIR = Path(__file__).resolve().parent.parent / "games" / "mame-artwork"
 ART_SCREEN_W = 512          # canvas pixels across the game screen (HDMI framebuffer); 2x native fits the DDR budget
 ART_SCREEN_H = 512          # vertical games: canvas pixels down the (portrait) screen, same per-frame load as 512 across
+ART_BLOB_MAX = (1 << 26)    # PNG bytes + markers after the table: artwork.sv boff is 26 bits (64 MB DDR window)
 ART_ROT = {"ROT0": 0, "ROT270": 1, "ROT90": 2}   # layout table byte 10
 ART_NATIVE = (256, 240)     # game pixels (MAME visarea) = the native composite plane
 ART_NATIVE_BY = {"ccastles": (256, 232)}     # boards whose visarea differs (ccastles: sync PROM vblank, lines 24-255)
@@ -361,6 +364,15 @@ def input_config(g, ports):
     return idle, dips, [(ddef >> (8 * i)) & 0xFF for i in range(3)], imap, buttons
 
 
+def port_default(fields):
+    """Port value with every field at its default (conditional fields left idle): artwork element states."""
+    level = 0xFF
+    for f in fields:
+        if "cond" not in f:
+            level = (level & ~f["mask"]) | (f["default"] & f["mask"])
+    return level
+
+
 def uses_trackball(ports):
     return any(f["kind"] == "input" and f["type"] in TRACKBALL_TYPES for fl in ports.values() for f in fl)
 
@@ -399,13 +411,15 @@ def parse_hiscores(path):
 HISCORES = parse_hiscores(HISCORE_DAT) if HISCORE_DAT.exists() else {}
 
 
-def art_table(zipname, rot="ROT0"):
-    """MAME default.lay -> (1024-byte table, [png names], [view names]); see rtl/art/artwork.sv for the format.
+def art_table(zipname, rot="ROT0", port_defaults=None):
+    """MAME default.lay -> (2048-byte table, [png names], [view names]); see rtl/art/artwork.sv for the format.
     rot = the set's orientation: the layout is in screen orientation (portrait for ROT90 / ROT270), the core's
     picture is the unrotated raster (ART_NATIVE). Views keep the screen and canvas on even pixels both
-    ways, so the core can also draw them turned 90 (OSD Orientation Horz).
+    ways, so the core can also draw them turned 90 (OSD Orientation Horz). port_defaults = {port tag: default value}
+    for input-driven elements.
     Layer record: op, image (rect: R), flags, colour alpha, X, Y, W, H, X2 (rect: G, B), W2.
-    Flags: [0] flipx, [1] alpha from mask, [3:2] kind (OSD toggle), [4] bezel-off rect, [5] side art, [6] rect."""
+    Flags: [0] flipx, [1] alpha from mask, [3:2] kind (OSD toggle: 0 backdrop, 1 overlay, 2 bezel, 3 control panel /
+    marquee), [4] bezel-off rect, [5] side art, [6] rect. A mask layer's colour alpha scales the mask (MAME alphafile)."""
     import struct, zipfile
     z = zipfile.ZipFile(ART_DIR / f"{zipname}.zip")
     native = ART_NATIVE_BY.get(zipname, ART_NATIVE)
@@ -431,19 +445,14 @@ def art_table(zipname, rot="ROT0"):
         b = _bounds(n)
         return None if b is None else (b[0], b[1], b[2] - b[0], b[3] - b[1])
 
-    # element -> ("img", file, alphafile) | ("rects", [(x0, y0, x1, y1 in element units 0-1, rgba)])
+    # element -> ("img", [image nodes], defstate) | ("rects", [(x0, y0, x1, y1 in element units 0-1, rgba)])
     elems = {}
     for e in lay.findall("element"):
         name, kids = e.get("name"), list(e)
         imgs = [k for k in kids if k.tag == "image"]
         rects = [k for k in kids if k.tag == "rect"]
         if imgs and len(imgs) == len(kids):
-            defstate = e.get("defstate", "0")
-            pick = [i for i in imgs if i.get("state", defstate) == defstate]
-            if not pick:                  # a lamp: no image in its default state (outputs are not driven yet)
-                print(f"artwork {zipname}: element {name} has no image for state {defstate}, skipped")
-                continue
-            elems[name] = ("img", pick[0].get("file"), pick[0].get("alphafile"))
+            elems[name] = ("img", imgs, e.get("defstate", "0"))
         elif rects and len(rects) == len(kids):
             ib = [_bounds(r) or (0.0, 0.0, 1.0, 1.0) for r in rects]     # MAME default: the unit square
             ix0, iy0 = min(b[0] for b in ib), min(b[1] for b in ib)
@@ -488,20 +497,114 @@ def art_table(zipname, rot="ROT0"):
                 out.append(it)
         return out
 
+    def state_of(it, el):
+        """Element state as MAME shows it with the set's default inputs: inputraw = (port & mask) >> lsb,
+        other input items 0 (not pressed), else the element's defstate (outputs are not driven)."""
+        tag = it.get("inputtag")
+        if not tag:
+            return el[2]
+        mask = int(it.get("inputmask", "0"), 0)
+        if it.get("inputraw") not in ("1", "yes"):
+            return "0"
+        if port_defaults is None or tag.lstrip(":") not in port_defaults:
+            print(f"artwork {zipname}: {it.get('ref')} input {tag} has no default here, defstate used")
+            return el[2]
+        return str((port_defaults[tag.lstrip(":")] & mask) >> ((mask & -mask).bit_length() - 1 if mask else 0))
+
+    def flatten_v2(node, tr, col, coll):
+        """MAME rendlay.cpp add_items: <element ref> / <screen> in document order; <group ref> mapped from the group's
+        bounds onto the item's bounds, colour multiplied (a group's blend attribute is ignored by MAME); hidden
+        collections dropped (MAME default visibility). -> [(tag, item node, (x0, y0, x1, y1), rgba, collection)]"""
+        out = []
+        for it in node:
+            if it.tag == "collection":
+                if it.get("visible", "yes") not in ("no", "0", "false"):
+                    out += flatten_v2(it, tr, col, coll or it.get("name"))
+            elif it.tag == "group":
+                gn = groups[it.get("ref")]
+                gb = _bounds(gn)
+                if gb is None:
+                    bs = [b for _, _, b, _, _ in flatten_v2(gn, lambda b: b, [1.0] * 4, None)]
+                    gb = (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+                ib = _bounds(it)
+                if it.find("orientation") is not None:
+                    print(f"artwork {zipname}: group {it.get('ref')} orientation not supported, drawn unrotated")
+
+                def gtr(b, gb=gb, ib=ib, tr=tr):
+                    if ib is None:
+                        return tr(b)
+                    sx, sy = (ib[2] - ib[0]) / (gb[2] - gb[0]), (ib[3] - ib[1]) / (gb[3] - gb[1])
+                    return tr((ib[0] + (b[0] - gb[0]) * sx, ib[1] + (b[1] - gb[1]) * sy,
+                               ib[0] + (b[2] - gb[0]) * sx, ib[1] + (b[3] - gb[1]) * sy))
+                out += flatten_v2(gn, gtr, [a * b for a, b in zip(col, rgba(it.find("color")))], coll)
+            elif it.tag in ("screen", "element") and _bounds(it) is not None:
+                out.append((it.tag, it, tr(_bounds(it)), [a * b for a, b in zip(col, rgba(it.find("color")))], coll))
+            elif it.tag in ("repeat", "param"):
+                print(f"artwork {zipname}: view {v.get('name')}: <{it.tag}> not supported, skipped")
+        return out
+
+    LEGACY = ("backdrop", "overlay", "bezel", "cpanel", "marquee")
     for v in lay.findall("view"):
-        items = {k: [] for k in ("backdrop", "screen", "overlay", "bezel", "cpanel", "marquee")}
-        for it in flatten(v):
-            if it.tag in items:
-                items[it.tag].append(it)
-        if len(items["screen"]) != 1:
-            print(f"artwork {zipname}: view {v.get('name')} needs exactly one screen, skipped")
-            continue
-        vb = bounds(v)
-        if vb is None:      # union of every item
-            bs = [bounds(i) for k in items for i in items[k]]
-            x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
-            vb = (x0, y0, max(b[0] + b[2] for b in bs) - x0, max(b[1] + b[3] for b in bs) - y0)
-        sb = bounds(items["screen"][0])
+        # layer list: (op, kind, element name, (x, y, w, h), rgba, orientation node, state)
+        fv = flatten(v)                 # <group ref> resolved
+        if any(it.tag in LEGACY for it in fv):
+            items = {k: [] for k in ("backdrop", "screen", "overlay", "bezel", "cpanel", "marquee")}
+            for it in fv:
+                if it.tag in items:
+                    items[it.tag].append(it)
+            if len(items["screen"]) != 1:
+                print(f"artwork {zipname}: view {v.get('name')} needs exactly one screen, skipped")
+                continue
+            vb = bounds(v)
+            if vb is None:      # union of every item
+                bs = [bounds(i) for k in items for i in items[k]]
+                x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
+                vb = (x0, y0, max(b[0] + b[2] for b in bs) - x0, max(b[1] + b[3] for b in bs) - y0)
+            sb = bounds(items["screen"][0])
+            if items["overlay"] or len(items["backdrop"]) <= 1:
+                order = [(OP_MUL, "overlay"), (OP_ADD, "backdrop"), (OP_ALPHA, "bezel"), (OP_ALPHA, "cpanel"), (OP_ALPHA, "marquee")]
+            else:
+                order = [(OP_UNDER, "backdrop"), (OP_ALPHA, "bezel"), (OP_ALPHA, "cpanel"), (OP_ALPHA, "marquee")]
+            seq = [(op, kind, it.get("element"), bounds(it), rgba(it.find("color")), it.find("orientation"), None)
+                   for op, kind in order for it in items[kind]]
+        else:
+            # modern layout (element ref / collection / group): draw order = document order, element blend default
+            # alpha; the screen draws opaque (BLENDMODE_NONE) unless blend="add". Before the screen: alpha = UNDER,
+            # add = ADD; after it: alpha = ALPHA, add = ADD, multiply = MUL. OSD toggle kind from the collection name.
+            flat = flatten_v2(v, lambda b: b, [1.0] * 4, None)
+            scr = [i for i, f in enumerate(flat) if f[0] == "screen"]
+            if len(scr) != 1:
+                print(f"artwork {zipname}: view {v.get('name')} needs exactly one screen, skipped")
+                continue
+            si = scr[0]
+            s0 = flat[si][2]
+            sb = (s0[0], s0[1], s0[2] - s0[0], s0[3] - s0[1])
+            vb = bounds(v)
+            if vb is None:
+                bs = [f[2] for f in flat]
+                x0, y0 = min(b[0] for b in bs), min(b[1] for b in bs)
+                vb = (x0, y0, max(b[2] for b in bs) - x0, max(b[3] for b in bs) - y0)
+            if flat[si][1].get("blend") not in (None, "none", "alpha", "add"):
+                print(f"artwork {zipname}: view {v.get('name')}: screen blend {flat[si][1].get('blend')} not supported")
+            opaque = flat[si][1].get("blend") != "add"
+            seq = []
+            for i, (tag, it, b, col, coll) in enumerate(flat):
+                if tag == "screen":
+                    continue
+                blend = it.get("blend", "alpha")
+                if blend == "multiply" and i < si:
+                    print(f"artwork {zipname}: {it.get('ref')} multiply under the screen not supported, skipped")
+                    continue
+                op = {"multiply": OP_MUL, "add": OP_ADD}.get(blend, OP_UNDER if i < si else OP_ALPHA)
+                if i < si and opaque and b[0] < s0[2] and s0[0] < b[2] and b[1] < s0[3] and s0[1] < b[3]:
+                    print(f"artwork {zipname}: {it.get('ref')} under an opaque screen: drawn under the game")
+                cn = (coll or "").lower()
+                kind = ("overlay" if "overlay" in cn else "backdrop" if "backdrop" in cn or "background" in cn else
+                        "bezel" if "bezel" in cn else "cpanel" if "panel" in cn or "marquee" in cn else "art" if cn else
+                        "overlay" if op == OP_MUL else "backdrop" if i < si or op == OP_ADD else "art")
+                el = elems.get(it.get("ref"))
+                seq.append((op, kind, it.get("ref"), (b[0], b[1], b[2] - b[0], b[3] - b[1]), col,
+                            it.find("orientation"), state_of(it, el) if el and el[0] == "img" else None))
         vert = rot != "ROT0"
         sc = ART_SCREEN_H / sb[3] if vert else ART_SCREEN_W / sb[2]
         cw, ch = (round(vb[2] * sc) + 1) & ~1, round(vb[3] * sc)
@@ -513,66 +616,75 @@ def art_table(zipname, rot="ROT0"):
         ch = (ch + 1) & ~1
         gw, gh = native[::-1] if vert else native        # game picture as the layout shows it
         assert cw <= 2048 and ch <= 2048 and sw >= gw and sh >= gh, v.get("name")
-        if items["overlay"] or len(items["backdrop"]) <= 1:
-            order = [(OP_MUL, "overlay"), (OP_ADD, "backdrop"), (OP_ALPHA, "bezel"), (OP_ALPHA, "cpanel"), (OP_ALPHA, "marquee")]
-        else:
-            order = [(OP_UNDER, "backdrop"), (OP_ALPHA, "bezel"), (OP_ALPHA, "cpanel"), (OP_ALPHA, "marquee")]
-        KIND = {"backdrop": 0, "overlay": 1, "bezel": 2, "cpanel": 2, "marquee": 2}     # OSD toggle per layer
-        first = len(layers)
-        for op, kind in order:
-            for it in items[kind]:
-                if it.get("element") not in elems:
+        KIND = {"backdrop": 0, "overlay": 1, "bezel": 2, "cpanel": 3, "marquee": 3, "art": 2}   # OSD toggle per layer
+        first, nimg = len(layers), len(images)
+        qimg = 1                # this view: smallest q / 256 keeping every PNG within the resampler's 15x downscale
+        for op, kind, ename, b, col, o, state in seq:
+            if ename not in elems:
+                continue
+            el = elems[ename]
+            if el[0] == "img":    # images visible in this state (no state attribute = every state)
+                st = el[2] if state is None else state
+                pick = [i for i in el[1] if i.get("state", st) == st]
+                if not pick:          # a lamp: no image in its default state (outputs are not driven yet)
+                    print(f"artwork {zipname}: element {ename} has no image for state {st}, skipped")
                     continue
-                el = elems[it.get("element")]
-                b = bounds(it)
-                col = rgba(it.find("color"))
-                o = it.find("orientation")
-                flipx = o is not None and o.get("flipx") == "yes"
-                if o is not None and (o.get("rotate", "0") != "0" or o.get("flipy") == "yes"):
-                    print(f"artwork {zipname}: {it.get('element')} rotate / flipy not supported, drawn unrotated")
+                el = ("img", pick[0].get("file"), pick[0].get("alphafile"))
+            flipx = o is not None and o.get("flipx") == "yes"
+            if o is not None and (o.get("rotate", "0") != "0" or o.get("flipy") == "yes"):
+                print(f"artwork {zipname}: {ename} rotate / flipy not supported, drawn unrotated")
 
-                def place(x0, y0, x1, y1):
-                    x = round((x0 - vb[0]) * sc); y = round((y0 - vb[1]) * sc)
-                    return x - ox, y - oy, round((x1 - vb[0]) * sc) - x, round((y1 - vb[1]) * sc) - y
+            def place(x0, y0, x1, y1):
+                x = round((x0 - vb[0]) * sc); y = round((y0 - vb[1]) * sc)
+                return x - ox, y - oy, round((x1 - vb[0]) * sc) - x, round((y1 - vb[1]) * sc) - y
 
-                k = KIND[kind] << 2
-                if el[0] == "rects":      # one solid-colour layer per rect, item colour x rect colour
-                    for rx0, ry0, rx1, ry1, rc in el[1]:
-                        x, y, w, h = place(b[0] + rx0 * b[2], b[1] + ry0 * b[3], b[0] + rx1 * b[2], b[1] + ry1 * b[3])
-                        if w <= 0 or h <= 0:
-                            continue
-                        r, gr, bl, a = (round(255 * rc[i] * col[i]) for i in range(4))
-                        side = kind != "bezel" and (x + w <= sx or x >= sx + sw)
-                        layers.append((op, r, 64 | k | (32 if side else 0), a, x, y, w, h, gr | bl << 8, 0))
-                    continue
-                if col[:3] != [1.0] * 3:
-                    print(f"artwork {zipname}: {it.get('element')} colour tint not supported, drawn untinted")
-                _, f, af = el
-                x, y, w, h = place(b[0], b[1], b[0] + b[2], b[1] + b[3])
-                ca = round(255 * col[3])
-                assert w <= 2048, f
+            k = KIND[kind] << 2
+            if el[0] == "rects":      # one solid-colour layer per rect, item colour x rect colour
+                for rx0, ry0, rx1, ry1, rc in el[1]:
+                    x, y, w, h = place(b[0] + rx0 * b[2], b[1] + ry0 * b[3], b[0] + rx1 * b[2], b[1] + ry1 * b[3])
+                    if w <= 0 or h <= 0:
+                        continue
+                    r, gr, bl, a = (round(255 * rc[i] * col[i]) for i in range(4))
+                    side = kind != "bezel" and (x + w <= sx or x >= sx + sw)
+                    layers.append((op, r, 64 | k | (32 if side else 0), a, x, y, w, h, gr | bl << 8, 0))
+                continue
+            if col[:3] != [1.0] * 3:
+                print(f"artwork {zipname}: {ename} colour tint not supported, drawn untinted")
+            _, f, af = el
+            x, y, w, h = place(b[0], b[1], b[0] + b[2], b[1] + b[3])
+            ca = round(255 * col[3])
+            assert w <= 2048, f
+            for name in [n for n in (af, f) if n]:
+                pw, ph = png_size(name)
+                assert pw <= 15 * w and ph <= 15 * h, f"{name}: downscale factor over 15"
+                qimg = max(qimg, -(-pw * 256 // (15 * max(1, w - 1))), -(-ph * 256 // (15 * max(1, h - 1))))   # view L0 high byte (1 px margin: RTL rounding)
+            # side art beside the screen and taller than it: with bezels off it is scaled to the screen's height
+            # (flag bit 4, alternate x / width; y / height = the screen's), so the game can fill the display
+            alt, x2, w2 = 0, 0, 0
+            side = kind != "bezel" and (x + w <= sx or x >= sx + sw)     # side art: OSD Side Art toggle (flag bit 5)
+            if side:
+                k |= 32
+            if side and h > sh:
+                w2 = max(1, round(w * sh / h))
+                x2 = x + w - w2 if x + w <= sx else x
+                alt = 16
                 for name in [n for n in (af, f) if n]:
                     pw, ph = png_size(name)
-                    assert pw <= 15 * w and ph <= 15 * h, f"{name}: downscale factor over 15"
-                # side art beside the screen and taller than it: with bezels off it is scaled to the screen's height
-                # (flag bit 4, alternate x / width; y / height = the screen's), so the game can fill the display
-                alt, x2, w2 = 0, 0, 0
-                side = kind != "bezel" and (x + w <= sx or x >= sx + sw)     # side art: OSD Side Art toggle (flag bit 5)
-                if side:
-                    k |= 32
-                if side and h > sh:
-                    w2 = max(1, round(w * sh / h))
-                    x2 = x + w - w2 if x + w <= sx else x
-                    alt = 16
-                    for name in [n for n in (af, f) if n]:
-                        pw, ph = png_size(name)
-                        assert pw <= 15 * w2 and ph <= 15 * sh, f"{name}: downscale factor over 15 (bezel off)"
-                if af:
-                    layers.append((OP_MASK, img_id(af), k | alt, 255, x, y, w, h, x2, w2))
-                layers.append((op, img_id(f), (1 if flipx else 0) | (2 if af else 0) | k | alt, ca, x, y, w, h, x2, w2))
-        views.append((v.get("name"), (cw, ch, sx, sy, sw, sh, first, len(layers) - first)))
-    assert len(views) <= 7 and len(layers) <= 48 and len(images) <= 32, (len(views), len(layers), len(images))
-    t = bytearray(1024)
+                    assert pw <= 15 * w2 and ph <= 15 * sh, f"{name}: downscale factor over 15 (bezel off)"
+                    qimg = max(qimg, -(-pw * 256 // (15 * max(1, w2 - 1))), -(-ph * 256 // (15 * max(1, sh - 1))))
+            if af:
+                layers.append((OP_MASK, img_id(af), k | alt, ca, x, y, w, h, x2, w2))
+            layers.append((op, img_id(f), (1 if flipx else 0) | (2 if af else 0) | k | alt, 255 if af else ca, x, y, w, h, x2, w2))
+        blob = sum(4 + z.getinfo(n).file_size for n in images)
+        if len(views) >= 7 or len(layers) > 112 or len(images) > 32 or blob > ART_BLOB_MAX:   # full: drop, try the next
+            print(f"artwork {zipname}: view {v.get('name')} dropped, table full "
+                  f"(views {len(views) + 1}/7, layers {len(layers)}/112, images {len(images)}/32, "
+                  f"PNG bytes {blob}/{ART_BLOB_MAX})")
+            del layers[first:], images[nimg:]
+            continue
+        # L0 high byte = qimg - 1 (artwork.sv floor for the HDMI fit; L0 itself is 7 bits)
+        views.append((v.get("name"), (cw, ch, sx, sy, sw, sh, first | (min(qimg, 256) - 1) << 8, len(layers) - first)))
+    t = bytearray(2048)
     struct.pack_into("<2sHHHHB", t, 0, b"AW", len(views), len(images), *native, ART_ROT[rot])
     for i, (_, rec) in enumerate(views):
         struct.pack_into("<8H", t, 16 + 16 * i, *rec)
@@ -581,10 +693,10 @@ def art_table(zipname, rot="ROT0"):
     return bytes(t), images, [n for n, _ in views]
 
 
-def art_xml(zipname, rot):
-    table, images, views = art_table(zipname, rot)
+def art_xml(zipname, rot, port_defaults=None):
+    table, images, views = art_table(zipname, rot, port_defaults)
     names = ", ".join(f"View {i + 1} = {n.replace('_', ' ')}" for i, n in enumerate(views))
-    rows = "\n".join("            " + " ".join(f"{b:02X}" for b in table[i:i + 32]) for i in range(0, 1024, 32))
+    rows = "\n".join("            " + " ".join(f"{b:02X}" for b in table[i:i + 32]) for i in range(0, 2048, 32))
     parts = "\n".join(f'        <part>41 57 49 {i:02X}</part>\n        <part name="{n}"/>' for i, n in enumerate(images))
     return f"""
     <!-- Index 5: MAME artwork, layout table (from default.lay) + PNGs from the artwork zip, as-is -->
@@ -632,7 +744,11 @@ def save_xml(g, cfg):
 """
 
 
-def mra(g, games, segs, build_inputs):
+def art_name(g):
+    return ARTWORK.get(g["name"]) or ARTWORK.get(g["parent"] or "")
+
+
+def mra(g, games, segs, build_inputs, with_art=False):
     ports = build_inputs(g["inputs"])
     cfg, idle, dips, ddef, imap, buttons, flags = config_bytes(g, ports)
     nbtn = max(buttons) if buttons else 0
@@ -660,7 +776,7 @@ def mra(g, games, segs, build_inputs):
             pos = s["addr"] + s["len"]
         return "\n".join(lines)
 
-    art = ARTWORK.get(g["name"]) or ARTWORK.get(g["parent"] or "")
+    art = art_name(g) if with_art else None
     dip_lines = "\n".join(f'        <dip name="{n}" bits="{b}" ids="{i}"' + (f' values="{v}"' if v else "") + "/>"
                           for n, b, i, v in dips)
     cfg_rows = "\n".join("            " + " ".join(f"{b:02X}" for b in cfg[i:i + 16]) for i in range(0, len(cfg), 16))
@@ -709,7 +825,7 @@ def mra(g, games, segs, build_inputs):
 {cfg_rows}
         </part>
     </rom>
-{save_xml(g, cfg)}{art_xml(art, g["rot"]) if art else ""}
+{save_xml(g, cfg)}{art_xml(art, g["rot"], {t: port_default(f) for t, f in ports.items()}) if art else ""}
     <remark>{remark(g)}</remark>
     <mratimestamp>20261012000000</mratimestamp>
 </misterromdescription>
@@ -763,10 +879,11 @@ def main():
         if (g["machine"], g["init"]) not in SUPPORTED:
             raise SystemExit(f'{name}: board {g["machine"]} / {g["init"]} not implemented')
         segs = place(parse_roms(src, name), g)
-        path = out_path(out_dir, g, games)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(mra(g, games, segs, build_inputs))
-        print(f'{name:12s} {path.relative_to(out_dir)}')
+        for root, with_art in [(out_dir, False)] + ([(out_dir / "_artwork", True)] if art_name(g) else []):
+            path = out_path(root, g, games)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(mra(g, games, segs, build_inputs, with_art))
+            print(f'{name:12s} {path.relative_to(out_dir)}')
 
 
 if __name__ == "__main__":

@@ -1,0 +1,175 @@
+<misterromdescription>
+    <name>Centipede (Revision 1)</name>
+    <region>World</region>
+    <homebrew>no</homebrew>
+    <bootleg>no</bootleg>
+    <version></version>
+    <alternative></alternative>
+    <platform></platform>
+    <series>Centipede</series>
+    <year>1980</year>
+    <manufacturer>Atari</manufacturer>
+    <category>Shooter</category>
+
+    <setname>centiped1</setname>
+    <parent>centiped</parent>
+    <mameversion>0289</mameversion>
+    <rbf>Centipede</rbf>
+    <about></about>
+
+    <resolution>15kHz</resolution>
+    <rotation>vertical (ccw)</rotation>
+    <flip>yes</flip>
+
+    <players>2 (alternating)</players>
+    <joystick>8-way</joystick>
+    <special_controls>trackball</special_controls>
+    <num_buttons>1</num_buttons>
+    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+
+    <switches default="52,09,00">
+        <dip name="Cabinet" bits="0" ids="Upright,Cocktail"/>
+        <dip name="Service Mode" bits="1" ids="Off,On" values="1,0"/>
+        <dip name="Language" bits="2,3" ids="English,German,French,Spanish"/>
+        <dip name="Lives" bits="4,5" ids="2,3,4,5"/>
+        <dip name="Bonus Life" bits="6,7" ids="10000,12000,15000,20000"/>
+        <dip name="Difficulty" bits="8" ids="Easy,Hard" values="1,0"/>
+        <dip name="Credit Minimum" bits="9" ids="1,2"/>
+        <dip name="Coinage" bits="10,11" ids="2C/1C,1C/1C,1C/2C,Free Play" values="3,2,1,0"/>
+        <dip name="Right Coin" bits="12,13" ids="*1,*4,*5,*6"/>
+        <dip name="Left Coin" bits="14" ids="*1,*2"/>
+        <dip name="Bonus Coins" bits="15,17" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins" values="0,1,2,3,4,5"/>
+    </switches>
+
+    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
+    <rom index="0" md5="none" zip="centiped1.zip|centiped.zip">
+        <part repeat="0x2000">00</part>
+        <part crc="674ab844" name="136001-107.d1"/>
+        <part crc="47ceddc9" name="136001-108.e1"/>
+        <part crc="7ee80952" name="136001-109.fh1"/>
+        <part crc="93b33dce" name="136001-110.j1"/>
+        <part repeat="0xC000">00</part>
+        <part crc="880acfb9" name="136001-111.f7"/>
+        <part repeat="0x1800">00</part>
+        <part crc="b1397029" name="136001-112.hj7"/>
+        <part repeat="0x1800">00</part>
+        <part crc="6fa3093a" name="136001-213.p4"/>
+        <part crc="4cd24c85" name="136001-113.p4"/>
+    </rom>
+
+    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <rom index="1">
+        <part>
+            00 11 02 00 20 FF 00 FF 54 02 00 00 00 00 00 00
+            00 00 00 00 80 81 00 00 13 14 05 0D 15 11 12 16
+            00 00 00 00 00 00 00 00 0A 09 0C 0B 01 02 03 04
+            82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91
+        </part>
+    </rom>
+
+    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <rom index="4"></rom>
+    <nvram index="4" size="64"></nvram>
+
+    <!-- Index 5: MAME artwork, layout table (from default.lay) + PNGs from the artwork zip, as-is -->
+    <!-- OSD Artwork: View 1 = Upright Artwork, View 2 = Upright Artwork Euro, View 3 = Cocktail Artwork, View 4 = XBLA Artwork, View 5 = Atari Classics Artwork, View 6 = Atari Classics Vertical, View 7 = Hausjam Artwork -->
+    <rom index="5" md5="none" zip="/mame-artwork/centiped.zip">
+        <part>
+            41 57 07 00 0E 00 00 01 F0 00 01 00 00 00 00 00 4C 03 2C 03 E0 00 A8 00 80 01 00 02 00 50 01 00
+            4C 03 2C 03 E0 00 A8 00 80 01 00 02 01 50 01 00 7C 05 1A 04 FE 01 0E 01 80 01 00 02 02 30 02 00
+            00 04 40 02 40 01 20 00 80 01 00 02 04 15 01 00 14 03 50 02 CA 00 42 00 80 01 00 02 05 11 04 00
+            38 02 F6 02 5C 00 6E 00 80 01 00 02 09 12 04 00 A2 03 0E 02 10 01 06 00 80 01 00 02 0D 34 01 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            02 00 08 FF FF FF FF FF 4B 03 55 03 00 00 00 00 02 01 08 FF FF FF FF FF 4B 03 55 03 00 00 00 00
+            02 02 08 FF FF FF 00 00 7B 05 19 04 00 00 00 00 02 03 08 FF FF FF 00 00 7B 05 19 04 00 00 00 00
+            01 04 00 FF 00 00 00 00 00 04 40 02 00 00 00 00 03 05 20 FF 00 00 1E 02 62 00 31 00 00 00 00 00
+            03 06 20 FF B1 02 1E 02 63 00 31 00 00 00 00 00 04 07 08 FF 00 00 00 00 14 03 4F 02 00 00 00 00
+            02 08 0A FF 00 00 00 00 14 03 4F 02 00 00 00 00 03 09 00 FF 00 00 C6 02 5F 00 2F 00 00 00 00 00
+            03 0A 00 FF D9 01 C6 02 5F 00 2F 00 00 00 00 00 04 0B 08 FF 00 00 00 00 38 02 F5 02 00 00 00 00
+            02 0C 0A FF 00 00 00 00 38 02 F5 02 00 00 00 00 02 0D 08 FF FF FF FF FF A2 03 0D 02 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+        </part>
+        <part>41 57 49 00</part>
+        <part name="centipede_bezel.png"/>
+        <part>41 57 49 01</part>
+        <part name="centipede_bezel_euro.png"/>
+        <part>41 57 49 02</part>
+        <part name="atari_cocktail_wood.png"/>
+        <part>41 57 49 03</part>
+        <part name="centipede_cocktail.png"/>
+        <part>41 57 49 04</part>
+        <part name="centipede_xbla_ws.png"/>
+        <part>41 57 49 05</part>
+        <part name="centipede_acc_button_1_off.png"/>
+        <part>41 57 49 06</part>
+        <part name="centipede_acc_button_2_off.png"/>
+        <part>41 57 49 07</part>
+        <part name="centipede_acc_mask.png"/>
+        <part>41 57 49 08</part>
+        <part name="centipede_acc.png"/>
+        <part>41 57 49 09</part>
+        <part name="centipede_acc_vertical_button_1_off.png"/>
+        <part>41 57 49 0A</part>
+        <part name="centipede_acc_vertical_button_2_off.png"/>
+        <part>41 57 49 0B</part>
+        <part name="centipede_acc_vertical_mask.png"/>
+        <part>41 57 49 0C</part>
+        <part name="centipede_acc_vertical.png"/>
+        <part>41 57 49 0D</part>
+        <part name="cent169.png"/>
+    </rom>
+
+    <remark>Centipede (Revision 1) (Atari)</remark>
+    <mratimestamp>20261012000000</mratimestamp>
+</misterromdescription>
