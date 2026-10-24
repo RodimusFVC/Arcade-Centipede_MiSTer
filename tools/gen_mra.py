@@ -67,6 +67,7 @@ ARTWORK = {"warlords": "warlords", "ccastles": "ccastles", "centiped": "centiped
 ART_DIR = Path(__file__).resolve().parent.parent / "games" / "mame-artwork"
 ART_SCREEN_W = 512          # canvas pixels across the game screen (HDMI framebuffer); 2x native fits the DDR budget
 ART_SCREEN_H = 512          # vertical games: canvas pixels down the (portrait) screen, same per-frame load as 512 across
+ART_MAX_W = 1400            # widest canvas line: the HDMI scaler fetches one per output line; >~1450 shimmers at 1080p (HW 2026-10-24)
 ART_BLOB_MAX = (1 << 26)    # PNG bytes + markers after the table: artwork.sv boff is 26 bits (64 MB DDR window)
 ART_ROT = {"ROT0": 0, "ROT270": 1, "ROT90": 2}   # layout table byte 10
 ART_NATIVE = (256, 240)     # game pixels (MAME visarea) = the native composite plane
@@ -600,23 +601,28 @@ def art_table(zipname, rot="ROT0", port_defaults=None):
                     print(f"artwork {zipname}: {it.get('ref')} under an opaque screen: drawn under the game")
                 cn = (coll or "").lower()
                 kind = ("overlay" if "overlay" in cn else "backdrop" if "backdrop" in cn or "background" in cn else
-                        "bezel" if "bezel" in cn else "cpanel" if "panel" in cn or "marquee" in cn else "art" if cn else
+                        "bezel" if "bezel" in cn else "cpanel" if "panel" in cn or "marquee" in cn else "side" if "side" in cn else "art" if cn else
                         "overlay" if op == OP_MUL else "backdrop" if i < si or op == OP_ADD else "art")
                 el = elems.get(it.get("ref"))
                 seq.append((op, kind, it.get("ref"), (b[0], b[1], b[2] - b[0], b[3] - b[1]), col,
                             it.find("orientation"), state_of(it, el) if el and el[0] == "img" else None))
         vert = rot != "ROT0"
         sc = ART_SCREEN_H / sb[3] if vert else ART_SCREEN_W / sb[2]
+        cap = ART_MAX_W / max(vb[2], vb[3])                 # height too: Orientation Horz turns it into the line width
+        if sc > cap:
+            gq = native[::-1] if vert else native
+            sc = max(cap, (gq[0] + 2) / sb[2], (gq[1] + 2) / sb[3])  # never below the game's native size + 2
+            print(f"artwork {zipname}: view {v.get('name')} shrunk to the {ART_MAX_W} px line cap (scale {sc:.3f})")
         cw, ch = (round(vb[2] * sc) + 1) & ~1, round(vb[3] * sc)
         ox = round((sb[0] - vb[0]) * sc) & 1        # shift the view so the screen starts on an even pixel
         oy = round((sb[1] - vb[1]) * sc) & 1        # and an even row (the view turned 90)
         sx = round((sb[0] - vb[0]) * sc) - ox
         sy = round((sb[1] - vb[1]) * sc) - oy
-        sw, sh = (round(sb[2] * sc / 2) * 2, ART_SCREEN_H) if vert else (ART_SCREEN_W, round(sb[3] * sc / 2) * 2)
+        sw, sh = round(sb[2] * sc / 2) * 2, round(sb[3] * sc / 2) * 2   # = (512 down / across) when not capped
         ch = (ch + 1) & ~1
         gw, gh = native[::-1] if vert else native        # game picture as the layout shows it
         assert cw <= 2048 and ch <= 2048 and sw >= gw and sh >= gh, v.get("name")
-        KIND = {"backdrop": 0, "overlay": 1, "bezel": 2, "cpanel": 3, "marquee": 3, "art": 2}   # OSD toggle per layer
+        KIND = {"backdrop": 0, "overlay": 1, "bezel": 2, "cpanel": 3, "marquee": 3, "art": 2, "side": 0}   # OSD toggle per layer
         first, nimg = len(layers), len(images)
         qimg = 1                # this view: smallest q / 256 keeping every PNG within the resampler's 15x downscale
         for op, kind, ename, b, col, o, state in seq:
@@ -646,7 +652,7 @@ def art_table(zipname, rot="ROT0", port_defaults=None):
                         continue
                     r, gr, bl, a = (round(255 * rc[i] * col[i]) for i in range(4))
                     side = kind != "bezel" and (x + w <= sx or x >= sx + sw)
-                    layers.append((op, r, 64 | k | (32 if side else 0), a, x, y, w, h, gr | bl << 8, 0))
+                    layers.append((op, r, 64 | ((k & ~12) if side and KIND[kind] == 2 else k) | (32 if side else 0), a, x, y, w, h, gr | bl << 8, 0))
                 continue
             if col[:3] != [1.0] * 3:
                 print(f"artwork {zipname}: {ename} colour tint not supported, drawn untinted")
@@ -662,8 +668,8 @@ def art_table(zipname, rot="ROT0", port_defaults=None):
             # (flag bit 4, alternate x / width; y / height = the screen's), so the game can fill the display
             alt, x2, w2 = 0, 0, 0
             side = kind != "bezel" and (x + w <= sx or x >= sx + sw)     # side art: OSD Side Art toggle (flag bit 5)
-            if side:
-                k |= 32
+            if side:   # side art never follows the Bezel toggle (bezel off = side art at the screen's height)
+                k = ((k & ~12) if KIND[kind] == 2 else k) | 32
             if side and h > sh:
                 w2 = max(1, round(w * sh / h))
                 x2 = x + w - w2 if x + w <= sx else x
