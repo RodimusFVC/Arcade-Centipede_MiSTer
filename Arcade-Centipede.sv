@@ -280,35 +280,50 @@ wire reset = RESET | status[0] | buttons[1] | ioctl_download | ~locked;
 
 ///////////////////         Keyboard           //////////////////
 
-reg kb_up = 0, kb_down = 0, kb_left = 0, kb_right = 0;
-reg kb_b1 = 0, kb_b2 = 0;
-reg kb_coin1 = 0, kb_coin2 = 0, kb_start1 = 0, kb_start2 = 0, kb_pause = 0, kb_service = 0, kb_tilt = 0;
-
-wire       pressed = ~ps2_key[9];
-wire [7:0] code    = ps2_key[7:0];
-
-always @(posedge CLK_48M) begin
-	reg old_state;
-	old_state <= ps2_key[10];
-	if (old_state != ps2_key[10]) begin
-		case (code)
-			'h16: kb_start1  <= pressed; // 1
-			'h1E: kb_start2  <= pressed; // 2
-			'h2E: kb_coin1   <= pressed; // 5
-			'h36: kb_coin2   <= pressed; // 6
-			'h46: kb_service <= pressed; // 9
-			'h2C: kb_tilt    <= pressed; // T
-			'h4D: kb_pause   <= pressed; // P
-
-			'h75: kb_up      <= pressed; // up
-			'h72: kb_down    <= pressed; // down
-			'h6B: kb_left    <= pressed; // left
-			'h74: kb_right   <= pressed; // right
-			'h14: kb_b1      <= pressed; // ctrl
-			'h11: kb_b2      <= pressed; // alt
-		endcase
-	end
-end
+// CTL-2026-10-24: original block commented out below (replaced by rtl/mister_custom/controllers.sv modules after it)
+// reg kb_up = 0, kb_down = 0, kb_left = 0, kb_right = 0;
+// reg kb_b1 = 0, kb_b2 = 0;
+// reg kb_coin1 = 0, kb_coin2 = 0, kb_start1 = 0, kb_start2 = 0, kb_pause = 0, kb_service = 0, kb_tilt = 0;
+//
+// wire       pressed = ~ps2_key[9];
+// wire [7:0] code    = ps2_key[7:0];
+//
+// always @(posedge CLK_48M) begin
+// 	reg old_state;
+// 	old_state <= ps2_key[10];
+// 	if (old_state != ps2_key[10]) begin
+// 		case (code)
+// 			'h16: kb_start1  <= pressed; // 1
+// 			'h1E: kb_start2  <= pressed; // 2
+// 			'h2E: kb_coin1   <= pressed; // 5
+// 			'h36: kb_coin2   <= pressed; // 6
+// 			'h46: kb_service <= pressed; // 9
+// 			'h2C: kb_tilt    <= pressed; // T
+// 			'h4D: kb_pause   <= pressed; // P
+//
+// 			'h75: kb_up      <= pressed; // up
+// 			'h72: kb_down    <= pressed; // down
+// 			'h6B: kb_left    <= pressed; // left
+// 			'h74: kb_right   <= pressed; // right
+// 			'h14: kb_b1      <= pressed; // ctrl
+// 			'h11: kb_b2      <= pressed; // alt
+// 		endcase
+// 	end
+// end
+// CTL-2026-10-24: keyboard via ctl_keyboard (keys act on press; the old ~ps2_key[9] acted on release).
+// kb: [0] up [1] down [2] left [3] right [4] ctrl [5] alt [6] 1 [7] 2 [8] 5 [9] 6 [10] 9 [11] T [12] P
+wire [12:0] kb;
+// CTL2-2026-10-25: original below (pause connected; no toggle keys here, so no behaviour change)
+// ctl_keyboard u_kb(.clk(CLK_48M), .ps2_key(ps2_key), .kb(kb));
+/* verilator lint_off UNUSED */
+wire kbx_none;                                     // v2 extra-key output: no extra keys here
+/* verilator lint_on UNUSED */
+ctl_keyboard u_kb(.clk(CLK_48M), .ps2_key(ps2_key), .pause(pause_cpu), .kb(kb), .kbx(kbx_none));
+wire kb_up    = kb[0];
+wire kb_down  = kb[1];
+wire kb_left  = kb[2];
+wire kb_right = kb[3];
+wire kb_pause = kb[12];
 
 //////////////////  Arcade Buttons/Interfaces   ///////////////////////////
 
@@ -316,7 +331,9 @@ end
 // 2/3 vertical and 4/5 horizontal quadrature A/B
 wire snac_en = status[31];
 assign USER_OUT = snac_en ? 7'b0111111 : 7'b1111111;
+/* verilator lint_off UNUSED */   // CTL-2026-10-24: user_s[5:2] no longer read (the SNAC decoders sync USER_IN themselves)
 reg  [6:0] user_s1 = 7'h7F, user_s = 7'h7F;
+/* verilator lint_on UNUSED */
 always @(posedge CLK_48M) begin user_s1 <= USER_IN; user_s <= user_s1; end
 wire snac_fire = snac_en & ~user_s[0];
 wire snac_coin = snac_en & ~user_s[1];
@@ -333,81 +350,151 @@ wire [3:0] dir2 = stick_tb ? 4'd0 : dir2_raw;
 
 wire m_pause = joystick_0[11] | kb_pause;
 
-// Trackball: fine counters from mouse, SNAC quadrature edges, and (Trackball mode) left stick / d-pad once a frame.
-// The board sees the counter >> base (Centipede boards 1 = MAME's 50 %, Crystal Castles 3 = MAME's 10 %), one less
-// for Fast, one more for Slow. SNAC and the stick add 2^(base-1) per count, so their rate is the same on every board
-// (SNAC = the Crystal Castles core's LETA rate). MAME: player 1 X is reversed; player 2 (cocktail) Y is reversed.
-wire [1:0] tb_base = v_cc ? 2'd3 : 2'd1;
-wire [3:0] tb_unit = v_cc ? 4'd4 : 4'd1;
-reg [11:0] tb1x = 12'd0, tb1y = 12'd0, tb2x = 12'd0, tb2y = 12'd0;
-reg        mouse_tog = 1'b0, tb_vbl = 1'b0;
-reg  [2:0] qa_h = 3'd0, qb_h = 3'd0, qa_v = 3'd0, qb_v = 3'd0;
+// CTL-2026-10-24: original block commented out below (replaced by rtl/mister_custom/controllers.sv modules after it)
+// // Trackball: fine counters from mouse, SNAC quadrature edges, and (Trackball mode) left stick / d-pad once a frame.
+// // The board sees the counter >> base (Centipede boards 1 = MAME's 50 %, Crystal Castles 3 = MAME's 10 %), one less
+// // for Fast, one more for Slow. SNAC and the stick add 2^(base-1) per count, so their rate is the same on every board
+// // (SNAC = the Crystal Castles core's LETA rate). MAME: player 1 X is reversed; player 2 (cocktail) Y is reversed.
+// wire [1:0] tb_base = v_cc ? 2'd3 : 2'd1;
+// wire [3:0] tb_unit = v_cc ? 4'd4 : 4'd1;
+// reg [11:0] tb1x = 12'd0, tb1y = 12'd0, tb2x = 12'd0, tb2y = 12'd0;
+// reg        mouse_tog = 1'b0, tb_vbl = 1'b0;
+// reg  [2:0] qa_h = 3'd0, qb_h = 3'd0, qa_v = 3'd0, qb_v = 3'd0;
+//
+// function automatic [11:0] stick_d(input [7:0] a, input pos, input neg, input [3:0] u);
+// 	reg [11:0] d;
+// 	begin
+// 		d = ($signed(a) > 8'sd12 || $signed(a) < -8'sd12) ? {{7{a[7]}}, a[7:3]} : pos ? 12'd6 : neg ? -12'd6 : 12'd0;
+// 		stick_d = d * {8'd0, u};
+// 	end
+// endfunction
+//
+// wire [11:0] mouse_dx = {{4{ps2_mouse[4]}}, ps2_mouse[15:8]};
+// wire [11:0] mouse_dy = {{4{ps2_mouse[5]}}, ps2_mouse[23:16]};     // PS/2 Y is positive upward
+// wire [11:0] s1x = stick_d(joystick_l_analog_0[7:0],  dir1_raw[0], dir1_raw[1], tb_unit);
+// wire [11:0] s1y = stick_d(joystick_l_analog_0[15:8], dir1_raw[2], dir1_raw[3], tb_unit);
+// wire [11:0] s2x = stick_d(joystick_l_analog_1[7:0],  dir2_raw[0], dir2_raw[1], tb_unit);
+// wire [11:0] s2y = stick_d(joystick_l_analog_1[15:8], dir2_raw[2], dir2_raw[3], tb_unit);
+//
+// // SNAC quadrature (both edges of A and B, the Crystal Castles core's LETA decoder and direction)
+// wire q_h_ce  = qa_h[1] ^ qa_h[2] ^ qb_h[1] ^ qb_h[2];
+// wire q_h_dir = qa_h[1] ^ qb_h[2];
+// wire q_v_ce  = qa_v[1] ^ qa_v[2] ^ qb_v[1] ^ qb_v[2];
+// wire q_v_dir = qa_v[1] ^ qb_v[2];
+//
+// always @(posedge CLK_48M) begin
+// 	mouse_tog <= ps2_mouse[24];
+// 	tb_vbl    <= vblank;
+// 	qa_v <= {qa_v[1:0], user_s[2]}; qb_v <= {qb_v[1:0], user_s[3]};
+// 	qa_h <= {qa_h[1:0], user_s[4]}; qb_h <= {qb_h[1:0], user_s[5]};
+// 	if (mouse_tog != ps2_mouse[24]) begin
+// 		tb1x <= tb1x - mouse_dx;
+// 		tb1y <= tb1y - mouse_dy;
+// 	end
+// 	else if (snac_en && (q_h_ce || q_v_ce)) begin
+// 		if (q_h_ce) tb1x <= q_h_dir ? tb1x - {8'd0, tb_unit} : tb1x + {8'd0, tb_unit};
+// 		if (q_v_ce) tb1y <= q_v_dir ? tb1y - {8'd0, tb_unit} : tb1y + {8'd0, tb_unit};
+// 	end
+// 	else if (stick_tb && vblank && !tb_vbl) begin
+// 		tb1x <= tb1x - s1x;
+// 		tb1y <= tb1y + s1y;
+// 		tb2x <= tb2x + s2x;
+// 		tb2y <= tb2y - s2y;
+// 	end
+// end
+//
+// function automatic [7:0] tb_scale(input [11:0] c, input [1:0] spd, input [1:0] base);
+// 	reg [2:0] sh;
+// 	begin
+// 		sh = {1'b0, base} + (spd == 2'd2 ? 3'd1 : 3'd0) - (spd == 2'd1 ? 3'd1 : 3'd0);
+// 		tb_scale = 8'(c >> sh);
+// 	end
+// endfunction
+// wire [7:0] tb1x_o = tb_scale(tb1x, status[29:28], tb_base), tb1y_o = tb_scale(tb1y, status[29:28], tb_base);
+// wire [7:0] tb2x_o = tb_scale(tb2x, status[29:28], tb_base), tb2y_o = tb_scale(tb2y, status[29:28], tb_base);
+//
+// // direction latched on every count (Atari trackball DIR flip-flop / MAME read_trackball sign)
+// reg  [7:0] tb1x_d = 0, tb1y_d = 0, tb2x_d = 0, tb2y_d = 0;
+// reg  [3:0] tb_sign = 4'd0;
+// wire [7:0] d1x = tb1x_o - tb1x_d, d1y = tb1y_o - tb1y_d, d2x = tb2x_o - tb2x_d, d2y = tb2y_o - tb2y_d;
+// always @(posedge CLK_48M) begin
+// 	tb1x_d <= tb1x_o; tb1y_d <= tb1y_o; tb2x_d <= tb2x_o; tb2y_d <= tb2y_o;
+// 	if (d1x != 8'd0) tb_sign[0] <= d1x[7];
+// 	if (d1y != 8'd0) tb_sign[1] <= d1y[7];
+// 	if (d2x != 8'd0) tb_sign[2] <= d2x[7];
+// 	if (d2y != 8'd0) tb_sign[3] <= d2y[7];
+// end
+// CTL-2026-10-24: trackball via ctl_mouse + ctl_tick + ctl_quad_decoder (SNAC, own 2-FF sync of USER_IN) + ctl_trackball.
+// 12-bit counters; board sees counter >> base (Centipede boards 1, Crystal Castles 3) -1 Fast / +1 Slow; SNAC and the
+// stick add 2^(base-1) per count; P1 X and P2 Y reversed (MAME); DIR latch per axis. All sources on one clock are summed.
+wire       tb_mouse_ev;
+wire [9:0] tb_mouse_dx, tb_mouse_dy;
+/* verilator lint_off UNUSED */
+wire [2:0] tb_mouse_btn;
+/* verilator lint_on UNUSED */
+ctl_mouse u_mouse(.clk(CLK_48M), .ps2_mouse(ps2_mouse), .ev(tb_mouse_ev), .dx(tb_mouse_dx), .dy(tb_mouse_dy), .btn(tb_mouse_btn));
+wire frame_tick;
+// CTL2-2026-10-25: original below (the frame tick, both trackballs and the paddles stop while paused)
+// ctl_tick #(.MODE(0)) u_frame_tick(.clk(CLK_48M), .pause(1'b0), .vblank(vblank), .period(18'd0), .tick(frame_tick));
+ctl_tick #(.MODE(0)) u_frame_tick(.clk(CLK_48M), .pause(pause_cpu), .vblank(vblank), .period(18'd0), .tick(frame_tick));
+wire q_h_ce, q_h_dir, q_v_ce, q_v_dir;
+ctl_quad_decoder u_quad_h(.clk(CLK_48M), .a(USER_IN[4]), .b(USER_IN[5]), .ce(q_h_ce), .dir(q_h_dir));
+ctl_quad_decoder u_quad_v(.clk(CLK_48M), .a(USER_IN[2]), .b(USER_IN[3]), .ce(q_v_ce), .dir(q_v_dir));
+wire [7:0] tb1x_o, tb1y_o, tb2x_o, tb2y_o;
+wire [1:0] tb1_sign, tb2_sign;
+ctl_trackball #(.CW(12), .OUT_W(8), .MOUSE_SH(0), .SPIN_SH(0), .STICK_RSH(3), .DPAD_STEP(6), .DZ(12), .LIVE_ANY(0)) u_tb1
+(
+	// CTL2-2026-10-25: original below
+// 	.clk(CLK_48M), .reset(1'b0), .pause(1'b0), .rev(2'b01), .unit_sh(v_cc ? 2'd2 : 2'd0), .base_sh(v_cc ? 4'd3 : 4'd1),
+	.clk(CLK_48M), .reset(1'b0), .pause(pause_cpu), .rev(2'b01), .unit_sh(v_cc ? 2'd2 : 2'd0), .base_sh(v_cc ? 4'd3 : 4'd1),
+	.speed(status[29:28]), .mouse_ev(tb_mouse_ev), .mouse_dx(tb_mouse_dx), .mouse_dy(tb_mouse_dy), .spinner(9'd0),
+	.quad_ce({q_v_ce & snac_en, q_h_ce & snac_en}), .quad_dir({q_v_dir, q_h_dir}),
+	.tick(frame_tick), .stick_en(stick_tb), .stick(joystick_l_analog_0), .dpad(dir1_raw),
+	.x(tb1x_o), .y(tb1y_o), .dir(tb1_sign)
+);
+ctl_trackball #(.CW(12), .OUT_W(8), .MOUSE_SH(0), .SPIN_SH(0), .STICK_RSH(3), .DPAD_STEP(6), .DZ(12), .LIVE_ANY(0)) u_tb2
+(
+	// CTL2-2026-10-25: original below
+// 	.clk(CLK_48M), .reset(1'b0), .pause(1'b0), .rev(2'b10), .unit_sh(v_cc ? 2'd2 : 2'd0), .base_sh(v_cc ? 4'd3 : 4'd1),
+	.clk(CLK_48M), .reset(1'b0), .pause(pause_cpu), .rev(2'b10), .unit_sh(v_cc ? 2'd2 : 2'd0), .base_sh(v_cc ? 4'd3 : 4'd1),
+	.speed(status[29:28]), .mouse_ev(1'b0), .mouse_dx(10'd0), .mouse_dy(10'd0), .spinner(9'd0),
+	.quad_ce(2'b00), .quad_dir(2'b00),
+	.tick(frame_tick), .stick_en(stick_tb), .stick(joystick_l_analog_1), .dpad(dir2_raw),
+	.x(tb2x_o), .y(tb2y_o), .dir(tb2_sign)
+);
+wire [3:0] tb_sign = {tb2_sign, tb1_sign};   // [0] P1 X, [1] P1 Y, [2] P2 X, [3] P2 Y
 
-function automatic [11:0] stick_d(input [7:0] a, input pos, input neg, input [3:0] u);
-	reg [11:0] d;
-	begin
-		d = ($signed(a) > 8'sd12 || $signed(a) < -8'sd12) ? {{7{a[7]}}, a[7:3]} : pos ? 12'd6 : neg ? -12'd6 : 12'd0;
-		stick_d = d * {8'd0, u};
-	end
-endfunction
-
-wire [11:0] mouse_dx = {{4{ps2_mouse[4]}}, ps2_mouse[15:8]};
-wire [11:0] mouse_dy = {{4{ps2_mouse[5]}}, ps2_mouse[23:16]};     // PS/2 Y is positive upward
-wire [11:0] s1x = stick_d(joystick_l_analog_0[7:0],  dir1_raw[0], dir1_raw[1], tb_unit);
-wire [11:0] s1y = stick_d(joystick_l_analog_0[15:8], dir1_raw[2], dir1_raw[3], tb_unit);
-wire [11:0] s2x = stick_d(joystick_l_analog_1[7:0],  dir2_raw[0], dir2_raw[1], tb_unit);
-wire [11:0] s2y = stick_d(joystick_l_analog_1[15:8], dir2_raw[2], dir2_raw[3], tb_unit);
-
-// SNAC quadrature (both edges of A and B, the Crystal Castles core's LETA decoder and direction)
-wire q_h_ce  = qa_h[1] ^ qa_h[2] ^ qb_h[1] ^ qb_h[2];
-wire q_h_dir = qa_h[1] ^ qb_h[2];
-wire q_v_ce  = qa_v[1] ^ qa_v[2] ^ qb_v[1] ^ qb_v[2];
-wire q_v_dir = qa_v[1] ^ qb_v[2];
-
-always @(posedge CLK_48M) begin
-	mouse_tog <= ps2_mouse[24];
-	tb_vbl    <= vblank;
-	qa_v <= {qa_v[1:0], user_s[2]}; qb_v <= {qb_v[1:0], user_s[3]};
-	qa_h <= {qa_h[1:0], user_s[4]}; qb_h <= {qb_h[1:0], user_s[5]};
-	if (mouse_tog != ps2_mouse[24]) begin
-		tb1x <= tb1x - mouse_dx;
-		tb1y <= tb1y - mouse_dy;
-	end
-	else if (snac_en && (q_h_ce || q_v_ce)) begin
-		if (q_h_ce) tb1x <= q_h_dir ? tb1x - {8'd0, tb_unit} : tb1x + {8'd0, tb_unit};
-		if (q_v_ce) tb1y <= q_v_dir ? tb1y - {8'd0, tb_unit} : tb1y + {8'd0, tb_unit};
-	end
-	else if (stick_tb && vblank && !tb_vbl) begin
-		tb1x <= tb1x - s1x;
-		tb1y <= tb1y + s1y;
-		tb2x <= tb2x + s2x;
-		tb2y <= tb2y - s2y;
-	end
-end
-
-function automatic [7:0] tb_scale(input [11:0] c, input [1:0] spd, input [1:0] base);
-	reg [2:0] sh;
-	begin
-		sh = {1'b0, base} + (spd == 2'd2 ? 3'd1 : 3'd0) - (spd == 2'd1 ? 3'd1 : 3'd0);
-		tb_scale = 8'(c >> sh);
-	end
-endfunction
-wire [7:0] tb1x_o = tb_scale(tb1x, status[29:28], tb_base), tb1y_o = tb_scale(tb1y, status[29:28], tb_base);
-wire [7:0] tb2x_o = tb_scale(tb2x, status[29:28], tb_base), tb2y_o = tb_scale(tb2y, status[29:28], tb_base);
-
-// direction latched on every count (Atari trackball DIR flip-flop / MAME read_trackball sign)
-reg  [7:0] tb1x_d = 0, tb1y_d = 0, tb2x_d = 0, tb2y_d = 0;
-reg  [3:0] tb_sign = 4'd0;
-wire [7:0] d1x = tb1x_o - tb1x_d, d1y = tb1y_o - tb1y_d, d2x = tb2x_o - tb2x_d, d2y = tb2y_o - tb2y_d;
-always @(posedge CLK_48M) begin
-	tb1x_d <= tb1x_o; tb1y_d <= tb1y_o; tb2x_d <= tb2x_o; tb2y_d <= tb2y_o;
-	if (d1x != 8'd0) tb_sign[0] <= d1x[7];
-	if (d1y != 8'd0) tb_sign[1] <= d1y[7];
-	if (d2x != 8'd0) tb_sign[2] <= d2x[7];
-	if (d2y != 8'd0) tb_sign[3] <= d2y[7];
-end
-
-// control ids used by the MRA input map (tools/gen_mra.py CTL)
+// CTL-2026-10-24: original block commented out below (replaced by rtl/mister_custom/controllers.sv modules after it)
+// // control ids used by the MRA input map (tools/gen_mra.py CTL)
+// wire [63:0] ctl =
+// {
+// 	36'd0,
+// 	joystick_3[9] | joystick_3[10],                 // 27 start 4
+// 	joystick_2[9] | joystick_2[10],                 // 26 start 3
+// 	joystick_3[4],                                  // 25 P4 Btn 1
+// 	joystick_2[4],                                  // 24 P3 Btn 1
+// 	joystick_2[8] | joystick_3[8],                  // 23 coin 3
+// 	kb_service,                                     // 22 service
+// 	kb_tilt,                                        // 21 tilt
+// 	joystick_0[10] | joystick_1[10] | kb_start2,    // 20 start 2
+// 	joystick_0[9]  | joystick_1[9]  | kb_start1,    // 19 start 1
+// 	joystick_1[8] | kb_coin2,                       // 18 coin 2
+// 	joystick_0[8] | kb_coin1 | snac_coin,           // 17 coin 1
+// 	joystick_1[7:4],                                // 16-13 P2 Btn 4-1
+// 	dir2[0], dir2[1], dir2[2], dir2[3],             // 12 R, 11 L, 10 D, 9 U
+// 	joystick_0[7:6], joystick_0[5] | kb_b2, joystick_0[4] | kb_b1 | ps2_mouse[0] | snac_fire,   // 8-5 P1 Btn 4-1
+// 	dir1[0], dir1[1], dir1[2], dir1[3],             // 4 R, 3 L, 2 D, 1 U
+// 	1'b0                                            // 0 none
+// };
+// CTL-2026-10-24: control ids via ctl_ids (ids 0-23; pad 2's Start now gives Start 2 only, it no longer presses Start 1).
+// Ids 24-27 stay core-specific; ids 32-35 (Btn 5-6) are left 0 as before.
+/* verilator lint_off UNUSED */
+wire [35:0] ids;
+/* verilator lint_on UNUSED */
+// CTL2-2026-10-25: original below (BTN56 0: ids 32-35 stay 0; this core's maps never used them)
+// ctl_ids u_ids(.joy0(joystick_0), .joy1(joystick_1), .kb(kb), .dir1(dir1), .dir2(dir2),
+ctl_ids #(.BTN56(0)) u_ids(.joy0(joystick_0), .joy1(joystick_1), .kb(kb), .dir1(dir1), .dir2(dir2),
+	.coin1(joystick_0[8] | kb[8] | snac_coin), .coin2(joystick_1[8] | kb[9]), .coin3(joystick_2[8] | joystick_3[8]), .ctl(ids));
 wire [63:0] ctl =
 {
 	36'd0,
@@ -415,18 +502,9 @@ wire [63:0] ctl =
 	joystick_2[9] | joystick_2[10],                 // 26 start 3
 	joystick_3[4],                                  // 25 P4 Btn 1
 	joystick_2[4],                                  // 24 P3 Btn 1
-	joystick_2[8] | joystick_3[8],                  // 23 coin 3
-	kb_service,                                     // 22 service
-	kb_tilt,                                        // 21 tilt
-	joystick_0[10] | joystick_1[10] | kb_start2,    // 20 start 2
-	joystick_0[9]  | joystick_1[9]  | kb_start1,    // 19 start 1
-	joystick_1[8] | kb_coin2,                       // 18 coin 2
-	joystick_0[8] | kb_coin1 | snac_coin,           // 17 coin 1
-	joystick_1[7:4],                                // 16-13 P2 Btn 4-1
-	dir2[0], dir2[1], dir2[2], dir2[3],             // 12 R, 11 L, 10 D, 9 U
-	joystick_0[7:6], joystick_0[5] | kb_b2, joystick_0[4] | kb_b1 | ps2_mouse[0] | snac_fire,   // 8-5 P1 Btn 4-1
-	dir1[0], dir1[1], dir1[2], dir1[3],             // 4 R, 3 L, 2 D, 1 U
-	1'b0                                            // 0 none
+	ids[23:6],                                      // 23-6 (coin 3 ... P1 Btn 2)
+	ids[5] | ps2_mouse[0] | snac_fire,              // 5 P1 Btn 1 (+ mouse left, SNAC fire)
+	ids[4:0]                                        // 4-1 P1 R L D U, 0 none
 };
 
 // DIP switches arrive from the OSD via ioctl index 254 (3 bytes of packed DIP fields)
@@ -437,28 +515,74 @@ always @(posedge CLK_48M) begin
 end
 wire [23:0] dips = {dip_sw[2], dip_sw[1], dip_sw[0]};
 
-reg [7:0] in_port[6];
-always @(posedge CLK_48M) begin
-	for (int p = 0; p < 6; p++)
-		for (int b = 0; b < 8; b++)
-			in_port[p][b] <= in_map[p*8 + b][7] ? dips[in_map[p*8 + b][4:0]]
-			                                    : port_idle[p][b] ^ ctl[in_map[p*8 + b][5:0]];
-end
+// CTL-2026-10-24: original block commented out below (replaced by rtl/mister_custom/controllers.sv modules after it)
+// reg [7:0] in_port[6];
+// always @(posedge CLK_48M) begin
+// 	for (int p = 0; p < 6; p++)
+// 		for (int b = 0; b < 8; b++)
+// 			in_port[p][b] <= in_map[p*8 + b][7] ? dips[in_map[p*8 + b][4:0]]
+// 			                                    : port_idle[p][b] ^ ctl[in_map[p*8 + b][5:0]];
+// end
+// CTL-2026-10-24: input ports via ctl_port_map (DIP_MODE 1: map byte 0x80 | n = packed DIP bit n, else idle ^ ctl[id])
+wire [47:0]  port_idle_p = {port_idle[5], port_idle[4], port_idle[3], port_idle[2], port_idle[1], port_idle[0]};
+wire [383:0] in_map_p;
+wire [47:0]  in_ports_p;
+genvar gm;
+generate
+	for (gm = 0; gm < 48; gm = gm + 1) begin : g_in_map
+		assign in_map_p[gm*8 +: 8] = in_map[gm];
+	end
+endgenerate
+// CTL2-2026-10-25: original below (v2's BASE_MODE inputs tied off; BASE_MODE 0 ignores them)
+// ctl_port_map #(.NP(6), .IDW(6), .DIP_MODE(1)) u_ports(.clk(CLK_48M), .idle(port_idle_p), .in_map(in_map_p),
+// 	.dips({8'd0, dips}), .ctl(ctl), .ovr_mask(48'd0), .ovr_val(48'd0), .ports(in_ports_p));
+ctl_port_map #(.NP(6), .IDW(6), .DIP_MODE(1)) u_ports(.clk(CLK_48M), .idle(port_idle_p), .in_map(in_map_p),
+	.dips({8'd0, dips}), .port_sel(48'd0), .dip_bytes(64'd0), .dip_bit(144'd0), .ctl(ctl), .ovr_mask(48'd0), .ovr_val(48'd0),
+	.ports(in_ports_p));
+wire [7:0] in_port[6];
+generate
+	for (gm = 0; gm < 6; gm = gm + 1) begin : g_in_port
+		assign in_port[gm] = in_ports_p[gm*8 +: 8];
+	end
+endgenerate
 
-// Warlords paddles P1-P4 (P1 also takes the mouse)
+// CTL-2026-10-24: original block commented out below (replaced by rtl/mister_custom/controllers.sv modules after it)
+// // Warlords paddles P1-P4 (P1 also takes the mouse)
+// wire [7:0] pad_pos[4];
+// paddle_ctl pad1(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
+// 	.paddle(paddle_0), .spinner(spinner_0), .use_mouse(1'b1), .mouse(ps2_mouse), .stick_x(joystick_l_analog_0[7:0]),
+// 	.left(joystick_0[1] | kb_left), .right(joystick_0[0] | kb_right), .pos(pad_pos[0]));
+// paddle_ctl pad2(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
+// 	.paddle(paddle_1), .spinner(spinner_1), .use_mouse(1'b0), .mouse(ps2_mouse), .stick_x(joystick_l_analog_1[7:0]),
+// 	.left(joystick_1[1]), .right(joystick_1[0]), .pos(pad_pos[1]));
+// paddle_ctl pad3(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
+// 	.paddle(paddle_2), .spinner(spinner_2), .use_mouse(1'b0), .mouse(ps2_mouse), .stick_x(joystick_l_analog_2[7:0]),
+// 	.left(joystick_2[1]), .right(joystick_2[0]), .pos(pad_pos[2]));
+// paddle_ctl pad4(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
+// 	.paddle(paddle_3), .spinner(spinner_3), .use_mouse(1'b0), .mouse(ps2_mouse), .stick_x(joystick_l_analog_3[7:0]),
+// 	.left(joystick_3[1]), .right(joystick_3[0]), .pos(pad_pos[3]));
+// CTL-2026-10-24: Warlords paddles P1-P4 via ctl_paddle (paddle_ctl's logic, 1D-CB, centre 80; P1 also takes the mouse)
 wire [7:0] pad_pos[4];
-paddle_ctl pad1(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
-	.paddle(paddle_0), .spinner(spinner_0), .use_mouse(1'b1), .mouse(ps2_mouse), .stick_x(joystick_l_analog_0[7:0]),
-	.left(joystick_0[1] | kb_left), .right(joystick_0[0] | kb_right), .pos(pad_pos[0]));
-paddle_ctl pad2(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
-	.paddle(paddle_1), .spinner(spinner_1), .use_mouse(1'b0), .mouse(ps2_mouse), .stick_x(joystick_l_analog_1[7:0]),
-	.left(joystick_1[1]), .right(joystick_1[0]), .pos(pad_pos[1]));
-paddle_ctl pad3(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
-	.paddle(paddle_2), .spinner(spinner_2), .use_mouse(1'b0), .mouse(ps2_mouse), .stick_x(joystick_l_analog_2[7:0]),
-	.left(joystick_2[1]), .right(joystick_2[0]), .pos(pad_pos[2]));
-paddle_ctl pad4(.clk(CLK_48M), .reset(reset), .vblank(vblank), .sensitivity(status[44:42]), .reverse(status[45]),
-	.paddle(paddle_3), .spinner(spinner_3), .use_mouse(1'b0), .mouse(ps2_mouse), .stick_x(joystick_l_analog_3[7:0]),
-	.left(joystick_3[1]), .right(joystick_3[0]), .pos(pad_pos[3]));
+// CTL2-2026-10-25: original below (PAUSE_MODE 1: position holds while paused, jumps to a knob moved while paused)
+// ctl_paddle u_pad1(.clk(CLK_48M), .reset(reset), .pause(1'b0), .tick(frame_tick), .sensitivity(status[44:42]),
+ctl_paddle #(.PAUSE_MODE(1)) u_pad1(.clk(CLK_48M), .reset(reset), .pause(pause_cpu), .tick(frame_tick), .sensitivity(status[44:42]),
+	.reverse(status[45]), .paddle(paddle_0), .spinner(spinner_0), .mouse_ev(tb_mouse_ev), .mouse_dx(tb_mouse_dx),
+	.stick_x(joystick_l_analog_0[7:0]), .left(joystick_0[1] | kb_left), .right(joystick_0[0] | kb_right), .pos(pad_pos[0]));
+// CTL2-2026-10-25: original below
+// ctl_paddle u_pad2(.clk(CLK_48M), .reset(reset), .pause(1'b0), .tick(frame_tick), .sensitivity(status[44:42]),
+ctl_paddle #(.PAUSE_MODE(1)) u_pad2(.clk(CLK_48M), .reset(reset), .pause(pause_cpu), .tick(frame_tick), .sensitivity(status[44:42]),
+	.reverse(status[45]), .paddle(paddle_1), .spinner(spinner_1), .mouse_ev(1'b0), .mouse_dx(10'd0),
+	.stick_x(joystick_l_analog_1[7:0]), .left(joystick_1[1]), .right(joystick_1[0]), .pos(pad_pos[1]));
+// CTL2-2026-10-25: original below
+// ctl_paddle u_pad3(.clk(CLK_48M), .reset(reset), .pause(1'b0), .tick(frame_tick), .sensitivity(status[44:42]),
+ctl_paddle #(.PAUSE_MODE(1)) u_pad3(.clk(CLK_48M), .reset(reset), .pause(pause_cpu), .tick(frame_tick), .sensitivity(status[44:42]),
+	.reverse(status[45]), .paddle(paddle_2), .spinner(spinner_2), .mouse_ev(1'b0), .mouse_dx(10'd0),
+	.stick_x(joystick_l_analog_2[7:0]), .left(joystick_2[1]), .right(joystick_2[0]), .pos(pad_pos[2]));
+// CTL2-2026-10-25: original below
+// ctl_paddle u_pad4(.clk(CLK_48M), .reset(reset), .pause(1'b0), .tick(frame_tick), .sensitivity(status[44:42]),
+ctl_paddle #(.PAUSE_MODE(1)) u_pad4(.clk(CLK_48M), .reset(reset), .pause(pause_cpu), .tick(frame_tick), .sensitivity(status[44:42]),
+	.reverse(status[45]), .paddle(paddle_3), .spinner(spinner_3), .mouse_ev(1'b0), .mouse_dx(10'd0),
+	.stick_x(joystick_l_analog_3[7:0]), .left(joystick_3[1]), .right(joystick_3[0]), .pos(pad_pos[3]));
 
 // Maze Invaders analog sticks (MAME STICK0-3, 40-BF, centre 7F): P1 Y reversed, P2 Y, P1 X, P2 X reversed.
 // Left stick, or the D-pad at full deflection.
