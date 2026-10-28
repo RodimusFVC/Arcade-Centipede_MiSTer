@@ -1,17 +1,18 @@
 set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
 
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/chip_pool_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_pool_pkg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-Centipede.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/centiped_board.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ccastles_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/centipede_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/centiped/centiped_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ccastles/ccastles_board.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/eeprom_93c46.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/paddle_ctl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/artwork.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/art_resample.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/png_decode.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/inflate.sv
 
 set_global_assignment -name QIP_FILE rtl/cpu/T65/t65.qip
-set_global_assignment -name QIP_FILE rtl/sound/pokey/pokey.qip
 set_global_assignment -name QIP_FILE rtl/sound/pokey_cx/pokey_cx.qip
 set_global_assignment -name QIP_FILE rtl/sound/jt49/hdl/jt49.qip
 set_global_assignment -name QIP_FILE rtl/sound/jt89/syn/quartus/jt89_verilog.qip
@@ -22,8 +23,6 @@ set_global_assignment -name VERILOG_FILE rtl/mister_custom/hiscore.v
 set_global_assignment -name VERILOG_FILE rtl/mister_custom/nvram.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mister_custom/controllers.sv
 
-# DPRAMSV-2026-10-25: VHDL dpram_dc replaced by the SystemVerilog one (same ports/generics + byteena); original:
-# set_global_assignment -name VHDL_FILE rtl/ram_rom/dpram_dc.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/dpram_dc.sv
 
 set_global_assignment -name VHDL_FILE rtl/cpu/s2650/base/base_pack.vhd

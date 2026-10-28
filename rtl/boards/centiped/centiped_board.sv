@@ -54,9 +54,30 @@ module centiped_board
     input         [3:0] tb_sign,        // direction of the last count: {P2 Y, P2 X, P1 Y, P1 X}, 1 = down
     input         [7:0] an0, an1, an2, an3,   // Warlords paddles P1-P4 / Maze Invaders STICK0-3
 
-    input        [24:0] ioctl_addr,
-    input         [7:0] ioctl_dout,
-    input               ioctl_wr0,
+
+    // shared CPU / sound chips, ROM blocks and board RAM pool in the dispatcher rtl/centipede_board.sv
+    output chip_pool_pkg::t65_i_t          t65_0_i,
+    input  chip_pool_pkg::t65_o_t          t65_0_o,
+    output chip_pool_pkg::pokey_i_t  [1:0] pokey_i,        // this board's POKEY 1 / 2
+    input  chip_pool_pkg::pokey_o_t  [1:0] pokey_o,
+    output chip_pool_pkg::s2650_i_t        s2650_0_i,
+    input  chip_pool_pkg::s2650_o_t        s2650_0_o,
+    output chip_pool_pkg::ayr_i_t          ay_0_i,
+    input  chip_pool_pkg::ay_o_t           ay_0_o,
+    output chip_pool_pkg::sn76489_i_t      sn_0_i,
+    input  chip_pool_pkg::sn76489_o_t      sn_0_o,
+    output chip_pool_pkg::eeprom93c46_i_t  eeprom_0_i,
+    input  chip_pool_pkg::eeprom93c46_o_t  eeprom_0_o,
+    output       [15:0] rom_prog_a,     // shared ROM blocks (read ports): program, graphics, PROMs
+    input         [7:0] rom_prog_q,
+    output       [12:0] rom_gfx_a,
+    input         [7:0] rom_gfx_lo_q, rom_gfx_hi_q,
+    output        [7:0] rom_sync_a,
+    input         [7:0] rom_sync_q,
+    output        [7:0] rom_p1_a,       // PROM at 0x14100 (colour / write-protect)
+    input         [7:0] rom_p1_q,
+    output ram_pool_pkg::pram_i_t [3:0] pr_i,
+    input  ram_pool_pkg::pram_o_t [3:0] pr_o,
 
     input               crt_flip,
     input  signed [3:0] h_adj,          // CRT position: HSYNC moved 2 pixels per step
@@ -128,12 +149,8 @@ always @(posedge clk) begin
     end
 end
 
-dpram_dc #(.widthad_a(8)) sync_prom
-(
-    .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00140), .q_a(),
-    .clock_b(clk), .address_b({vblank, vcnt[7:5], vcnt[3:0]}), .q_b(vprom_q)
-);
+assign rom_sync_a = {vblank, vcnt[7:5], vcnt[3:0]};
+assign vprom_q = rom_sync_q;
 
 // ---------------------------------------------------------------- reset, watchdog
 
@@ -172,22 +189,9 @@ end
 wire phi0_rise = h1_fall && phi0a && !phi0a_temp;   // one CPU cycle ends
 wire cpu_ce    = phi0_rise && !pause && !v_bull;
 
-T65 cpu
-(
-    .Mode(2'b00),
-    .Res_n(cpu_reset_n & ~v_bull),
-    .Enable(cpu_ce),
-    .Clk(clk),
-    .Rdy(1'b1),
-    .Abort_n(1'b1),
-    .IRQ_n(irq_n),
-    .NMI_n(1'b1),
-    .SO_n(1'b1),
-    .R_W_n(cpu_rw_n),
-    .A(cpu_a24),
-    .DI(cpu_din),
-    .DO(cpu_dout)
-);
+assign cpu_rw_n = t65_0_o.rw;
+assign cpu_a24  = {8'd0, t65_0_o.a};
+assign cpu_dout = t65_0_o.dout;
 
 // ---------------------------------------------------------------- S2650 (Bulls Eye Darts)
 
@@ -204,26 +208,8 @@ wire s26_ack = v_bull & ce_pix & ~pause & hcnt[1:0] == 2'b00 & s26_div == 2'd0;
 wire s26_acc = s26_ack & s26_req;
 always @(posedge clk) if (s26_acc && s26_mio && s26_ph == 2'b00) s26_lastcode <= s26_ad;
 
-s2650_cpu s2650
-(
-    .clk(clk),
-    .reset(~cpu_reset_n | ~v_bull),
-    .req(s26_req),
-    .ack(s26_ack),
-    .ad(s26_ad),
-    .wr(s26_wr),
-    .dw(s26_dw),
-    .dr(s26_dr),
-    .mio(s26_mio),
-    .ene(s26_ene),
-    .dc(s26_dc),
-    .ph(s26_ph),
-    .irq(1'b0),
-    .intack(s26_intack),
-    .ivec(8'h00),
-    .sense(1'b0),
-    .flag()
-);
+assign {s26_req, s26_ad, s26_wr, s26_dw, s26_mio, s26_ene, s26_dc, s26_ph, s26_intack} =
+       {s2650_0_o.req, s2650_0_o.ad, s2650_0_o.wr, s2650_0_o.dw, s2650_0_o.mio, s2650_0_o.ene, s2650_0_o.dc, s2650_0_o.ph, s2650_0_o.intack};
 
 // ---------------------------------------------------------------- common bus
 
@@ -304,7 +290,7 @@ assign pf_access = sel_pf & ~v_bull;
 
 // ---------------------------------------------------------------- ROM / RAM
 
-// Multipede: MAME init_multiped descramble, applied on read: CPU address j -> file address, data bits swapped
+// Multipede: ROM descramble, applied on read: CPU address j -> file address, data bits swapped
 wire [15:0] mp_j = {prg_bank, (mp_win && !prg_bank) ? {5'b00101, bus_a[9:0]} : bus_a[14:0]};
 wire [15:0] mp_i = {mp_j[15:13], mp_j[12] ^ ~mp_j[8], mp_j[11], mp_j[10] ^ ~mp_j[13], mp_j[9:0]};
 wire [15:0] mp_src = {mp_i[15], mp_i[14], mp_i[13], mp_i[1], mp_i[8], mp_i[11], mp_i[4], mp_i[7],
@@ -318,34 +304,40 @@ wire  [7:0] rom_q_raw;
 wire  [7:0] rom_q = v_multi ? {rom_q_raw[0], rom_q_raw[2], rom_q_raw[1], rom_q_raw[3],
                                rom_q_raw[4], rom_q_raw[5], rom_q_raw[6], rom_q_raw[7]} : rom_q_raw;
 
-dpram_dc #(.widthad_a(16)) prog_rom
-(
-    .clock_a(clk), .address_a(ioctl_addr[15:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:16] == 9'd0), .q_a(),
-    .clock_b(clk), .address_b(rom_addr), .q_b(rom_q_raw)
-);
+assign rom_prog_a = rom_addr;
+assign rom_q_raw = rom_prog_q;
 
-// work RAM, zeroed while in reset (MAME clears it for Magic Worm; every set initialises it anyway)
+// work RAM, zeroed while in reset (Magic Worm relies on it; every other set initialises it)
 reg  [9:0] clr_addr = 10'd0;
 always @(posedge clk) clr_addr <= reset ? clr_addr + 10'd1 : 10'd0;
 wire [7:0] ram_q;
-dpram_dc #(.widthad_a(10)) work_ram
-(
-    .clock_a(clk), .address_a(reset ? clr_addr : bus_a[9:0]), .data_a(reset ? 8'd0 : bus_dout),
-    .wren_a(reset | (bus_we & sel_ram)), .q_a(ram_q),
-    .clock_b(clk), .address_b(hs_addr), .data_b(hs_din), .wren_b(hs_we), .q_b(hs_dout)
-);
+// board RAMs = pool blocks 0-3 in the dispatcher (0 work RAM, 1 playfield, 2 line buffer, 3 EAROM)
+ram_pool_pkg::pram_i_t wram_i, pf_i, lb_i, ea_i;
+ram_pool_pkg::pram_o_t wram_o, pf_o, lb_o, ea_o;
+assign pr_i = {ea_i, lb_i, pf_i, wram_i};
+assign {ea_o, lb_o, pf_o, wram_o} = pr_o;
+assign wram_i.a_addr = 15'(reset ? clr_addr : bus_a[9:0]);
+assign wram_i.a_d    = reset ? 8'd0 : bus_dout;
+assign wram_i.a_we   = reset | (bus_we & sel_ram);
+assign wram_i.b_addr = 15'(hs_addr);
+assign wram_i.b_d    = hs_din;
+assign wram_i.b_we   = hs_we;
+assign ram_q = wram_o.a_q;
+assign hs_dout = wram_o.b_q;
 
 // ---------------------------------------------------------------- playfield RAM
 
 // 0000-03BF tile codes (32 x 30), 03C0 sprite picture, 03D0 vertical, 03E0 horizontal, 03F0 color
 reg  [9:0] pf_vaddr;
 wire [7:0] pf_q, pf_vq;
-dpram_dc #(.widthad_a(10)) pf_ram
-(
-    .clock_a(clk), .address_a(bus_a[9:0]), .data_a(bus_dout), .wren_a(bus_we & sel_pf), .q_a(pf_q),
-    .clock_b(clk), .address_b(pf_vaddr), .q_b(pf_vq)
-);
+assign pf_i.a_addr = 15'(bus_a[9:0]);
+assign pf_i.a_d    = bus_dout;
+assign pf_i.a_we   = bus_we & sel_pf;
+assign pf_i.b_addr = 15'(pf_vaddr);
+assign pf_i.b_d    = 8'd0;
+assign pf_i.b_we   = 1'b0;
+assign pf_q = pf_o.a_q;
+assign pf_vq = pf_o.b_q;
 
 // ---------------------------------------------------------------- output latch, flip, IRQ, watchdog
 
@@ -366,7 +358,7 @@ always @(posedge clk) begin
     else if (line_end && !vcnt[4] && vcnt_next[4]) irq_n <= ~vcnt_next[5];
 end
 
-// watchdog: 8 frames without a write resets the board (MAME set_vblank_count 8; Bulls Eye Darts has none)
+// watchdog: 8 frames without a write resets the board (Bulls Eye Darts has none)
 reg  [3:0] wd_cnt = 4'd0;
 reg        vbl_d = 1'b0;
 reg  [7:0] wd_hold = 8'd0;
@@ -409,13 +401,14 @@ always @(posedge clk) begin
 end
 wire [7:0] ea_nv_q, eep_nv_q;
 assign nv_dout = v_multi ? eep_nv_q : ea_nv_q;
-dpram_dc #(.widthad_a(6)) earom
-(
-    .clock_a(clk), .address_a(ea_addr), .data_a(ea_ctrl[2] ? 8'h00 : ea_in),
-    .wren_a(ce_pix & ea_ctrl[3] & ~ea_ctrl[1]), .q_a(ea_q),
-    .clock_b(clk), .address_b(nv_addr[5:0]), .data_b(nv_din), .wren_b(nv_we & nv_addr[7:6] == 2'b00 & ~v_multi),
-    .q_b(ea_nv_q)
-);
+assign ea_i.a_addr = 15'(ea_addr);
+assign ea_i.a_d    = ea_ctrl[2] ? 8'h00 : ea_in;
+assign ea_i.a_we   = ce_pix & ea_ctrl[3] & ~ea_ctrl[1];
+assign ea_i.b_addr = 15'(nv_addr[5:0]);
+assign ea_i.b_d    = nv_din;
+assign ea_i.b_we   = nv_we & nv_addr[7:6] == 2'b00 & ~v_multi;
+assign ea_q = ea_o.a_q;
+assign ea_nv_q = ea_o.b_q;
 
 // ---------------------------------------------------------------- Multipede 93C46
 
@@ -430,13 +423,8 @@ always @(posedge clk) begin
         eep_wr <= 1'b1;
     end
 end
-eeprom_93c46 eeprom
-(
-    .clk(clk), .reset(reset), .clear(1'b0),
-    .wr(eep_wr), .di(eep_di), .sk(eep_sk), .cs(eep_cs), .dout(eep_do),
-    .ext_sel(nv_sel & v_multi), .ext_addr(nv_addr[6:0]), .ext_din(nv_din), .ext_we(nv_we & ~nv_addr[7] & v_multi),
-    .ext_q(eep_nv_q)
-);
+assign eep_do = eeprom_0_o.dout;
+assign eep_nv_q = eeprom_0_o.ext_q;
 
 // ---------------------------------------------------------------- inputs
 
@@ -451,7 +439,7 @@ wire [7:0] c_in0 = (v_tb && !v_war) ? {tbsx, in0_v[6:4], tbx[3:0]} : in0_v;
 wire [7:0] c_in2 = (v_tb && !v_war) ? {tbsy, in2[6:4], tby[3:0]} : in2;
 wire [7:0] m_in0 = v_maze ? in0_v : tben ? {tbsx, in0_v[6:4], tbx[3:0]} : {tbsx, in0_v[6:0]};
 wire [7:0] m_in1 = v_maze ? in1 : tben ? {tbsy, in1[6:4], tby[3:0]} : {tbsy, in1[6:0]};
-wire [7:0] m_in2 = cntrlsel ? {in2[7:4], in3[2], in3[3], in3[0], in3[1]} : in2;   // MAME: P2 stick, reversed
+wire [7:0] m_in2 = cntrlsel ? {in2[7:4], in3[2], in3[3], in3[0], in3[1]} : in2;   // P2 stick, reversed
 
 reg  [7:0] in_q;
 always @* begin
@@ -482,7 +470,7 @@ always @(posedge clk) lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr
 wire [3:0] p1c0, p1c1, p1c2, p1c3, p2c0, p2c1, p2c2, p2c3;
 wire [7:0] pokey1_q, pokey2_q;
 
-// POKEY clock: a steady 12.096 MHz / 8 = 1.512 MHz (MAME), not the CPU's stretched phi0. Phase ph 3 of every 4th
+// POKEY clock: a steady 12.096 MHz / 8 = 1.512 MHz, not the CPU's stretched phi0. Phase ph 3 of every 4th
 // pixel, so it never coincides with cpu_ce (ph 7). A CPU write is held until the next POKEY clock.
 reg  [1:0] pk_hi = 2'd0;
 always @(posedge clk) if (ce_pix) pk_hi <= pk_hi + 2'd1;
@@ -497,39 +485,20 @@ always @(posedge clk) begin
 end
 wire       pk1_w = pk_ce & pk1_pend, pk2_w = pk_ce & pk2_pend;
 
-// Warlords paddles on POT0-3 as the real pot scan (MAME pokey_potgo / step_pot): after POTGO the counter runs at
+// Warlords paddles on POT0-3 as the real pot scan: after POTGO the counter runs at
 // clock / 114 (fast mode: every clock) to 228; a pot latches once the counter passes its value, ALLPOT reads 1 while
 // it is still counting and POTn reads the running counter until then
 wire [7:0] pot_count1;
 wire [7:0] pot_cmp = v_war ? {4'h0, pot_count1 > an3, pot_count1 > an2, pot_count1 > an1, pot_count1 > an0} : 8'h00;
 
-// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey1
-pokey_glue #(.POT_CMP(8'h0F)) pokey1
-(
-    .clk(clk), .ce(pk_ce), .enable_179(1'b1), .addr(pk1_w ? pk1_wa : bus_a[3:0]), .data_in(pk1_wd),
-    .wr_en(pk1_w), .reset_n(cpu_reset_n),
-    .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
-    .pot_in(pot_cmp), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
-    .data_out(pokey1_q),
-    .channel_0_out(p1c0), .channel_1_out(p1c1), .channel_2_out(p1c2), .channel_3_out(p1c3),
-    .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count(pot_count1)
-);
+assign pokey1_q = pokey_o[0].dout;
+assign {p1c3, p1c2, p1c1, p1c0} = {pokey_o[0].ch3, pokey_o[0].ch2, pokey_o[0].ch1, pokey_o[0].ch0};
+assign pot_count1 = pokey_o[0].pot_count;
 
-// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey2
-pokey_glue pokey2
-(
-    .clk(clk), .ce(pk_ce & map_m), .enable_179(1'b1), .addr(pk2_w ? pk2_wa : bus_a[3:0]), .data_in(pk2_wd),
-    .wr_en(pk2_w), .reset_n(cpu_reset_n),
-    .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
-    .pot_in(8'h00), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
-    .data_out(pokey2_q),
-    .channel_0_out(p2c0), .channel_1_out(p2c1), .channel_2_out(p2c2), .channel_3_out(p2c3),
-    .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
-);
+assign pokey2_q = pokey_o[1].dout;
+assign {p2c3, p2c2, p2c1, p2c0} = {pokey_o[1].ch3, pokey_o[1].ch2, pokey_o[1].ch1, pokey_o[1].ch0};
 
-// Millipede board: DIP switches are POKEY ALLPOT (MAME allpot_r)
+// Millipede board: DIP switches are POKEY ALLPOT
 wire [7:0] pokey1_rd = (map_m && bus_a[3:0] == 4'h8) ? dsw1 : pokey1_q;
 wire [7:0] pokey2_rd = (map_m && bus_a[3:0] == 4'h8) ? dsw2 : pokey2_q;
 
@@ -551,24 +520,8 @@ wire [7:0] ay_din = ay_cat_latch ? {4'd0, bus_a[3:0]} : bus_dout;
 wire [7:0] ay_q;
 wire [9:0] ay_sound;
 
-jt49_bus #(.COMP(3'b010)) ay
-(
-    .rst_n(cpu_reset_n),
-    .clk(clk),
-    .clk_en(ay_cen),
-    .bdir(ay_bdir),
-    .bc1(ay_bc1),
-    .din(ay_din),
-    .sel(1'b1),
-    .dout(ay_q),
-    .sound(ay_sound),
-    .A(), .B(), .C(),
-    .sample(),
-    .IOA_in(lfsr[7:0]),
-    .IOA_out(),
-    .IOB_in(8'hFF),
-    .IOB_out()
-);
+assign ay_q = ay_0_o.dout;
+assign ay_sound = ay_0_o.sound;
 
 wire signed [15:0] ay_audio;
 jt49_dcrm2 #(.sw(16)) ay_dcrm
@@ -579,19 +532,9 @@ jt49_dcrm2 #(.sw(16)) ay_dcrm
 
 // Bulls Eye Darts: SN76496 on the 2650 data port (WRTD)
 wire signed [10:0] sn_sound;
-jt89 sn
-(
-    .rst(~cpu_reset_n),
-    .clk(clk),
-    .clk_en(ay_cen),
-    .wr_n(~(s26_acc & ~s26_mio & s26_wr & ~s26_ene & s26_dc)),
-    .cs_n(1'b0),
-    .din(s26_dw),
-    .sound(sn_sound),
-    .ready()
-);
+assign sn_sound = sn_0_o.sound;
 
-// POKEY output: each channel's volume drives the chip's resistor DAC (90k / 26.5k / 8.05k / 3.4k, MAME vol_init);
+// POKEY output: each channel's volume drives the chip's resistor DAC (90k / 26.5k / 8.05k / 3.4k);
 // the output follows the summed conductance, normalised here to 0-255 per channel
 function automatic [7:0] pk_dac(input [3:0] v);
     case (v)
@@ -605,7 +548,7 @@ wire [9:0] pk1 = pk_dac(p1c0) + pk_dac(p1c1) + pk_dac(p1c2) + pk_dac(p1c3);
 wire [9:0] pk2 = pk_dac(p2c0) + pk_dac(p2c1) + pk_dac(p2c2) + pk_dac(p2c3);
 wire [15:0] pk_raw = map_m ? {1'b0, {1'b0, pk1} + {1'b0, pk2}, 4'd0} : {1'b0, pk1, 5'd0};   // full scale 32640
 
-// output stage: DC removal (~7 Hz), then Centipede's op-amp low-pass (MAME set_output_opamp_low_pass 3.3k / 0.01 uF,
+// output stage: DC removal (~7 Hz), then Centipede's op-amp low-pass (3.3k / 0.01 uF,
 // fc 4.8 kHz, 1-pole at 756 kHz; a = 1 - exp(-2 pi fc / fs) = 2575 / 65536)
 reg  [9:0] dc_div = 10'd0;
 always @(posedge clk) dc_div <= dc_div + 10'd1;
@@ -618,7 +561,7 @@ wire signed [31:0] pk_step = ($signed({pk_ac[15], pk_ac}) - $signed({pk_lp[15], 
 always @(posedge clk) if (dc_div[5:0] == 6'd0) pk_lp <= pk_lp + 16'(pk_step >>> 16);
 wire signed [15:0] pokey_audio = (variant <= 8'd1) ? pk_lp : pk_ac;
 
-// levels (sim, coin + start, 2026-10-13): POKEY x2, AY x4 put every board at RMS ~1000-2200, peaks < 20000
+// levels: POKEY x2, AY x4 put every board at RMS ~1000-2200, peaks < 20000
 function automatic signed [15:0] sat_shl(input signed [15:0] x, input [1:0] k);
     reg signed [18:0] y;
     begin
@@ -648,7 +591,7 @@ always @* begin
 end
 
 // 2650: RAM / playfield / ROM come straight from the BRAMs (addressed during ack); registers are latched at ack.
-// Data port read = MAME's protection answer: 1 at PC 0033 / 6B19 (pc = last code fetch + 1)
+// Data port read = the protection answer: 1 at PC 0033 / 6B19 (pc = last code fetch + 1)
 wire [14:0] s26_pc = s26_lastcode + 15'd1;
 reg  [1:0] s26_src = 2'd0;                          // 0 register, 1 RAM, 2 playfield, 3 ROM
 reg  [7:0] s26_reg = 8'd0;
@@ -731,18 +674,9 @@ always @* begin
 end
 wire [7:0] gfx_lo_q, gfx_hi_q;
 
-dpram_dc #(.widthad_a(13)) gfx_rom_lo
-(
-    .clock_a(clk), .address_a(ioctl_addr[12:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:13] == 12'h008), .q_a(),
-    .clock_b(clk), .address_b(gfx_addr), .q_b(gfx_lo_q)
-);
-dpram_dc #(.widthad_a(13)) gfx_rom_hi
-(
-    .clock_a(clk), .address_a(ioctl_addr[12:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:13] == 12'h009), .q_a(),
-    .clock_b(clk), .address_b(gfx_addr), .q_b(gfx_hi_q)
-);
+assign rom_gfx_a = gfx_addr;
+assign gfx_lo_q = rom_gfx_lo_q;
+assign gfx_hi_q = rom_gfx_hi_q;
 
 function automatic [7:0] rev8(input [7:0] d);
     rev8 = {d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]};
@@ -801,12 +735,13 @@ wire       lb_we_spr = sh_spr && pen != 2'd0 && ph == 3'd4;
 wire       lb_we_clr = vis && ph == 3'd5;
 wire [7:0] lb_q;
 
-dpram_dc #(.widthad_a(8)) line_buf
-(
-    .clock_a(clk), .address_a(lb_we_spr ? lb_wa : lb_x), .data_a(lb_we_spr ? lb_wd : 8'd0),
-    .wren_a(lb_we_spr | lb_we_clr), .q_a(),
-    .clock_b(clk), .address_b(lb_x), .q_b(lb_q)
-);
+assign lb_i.a_addr = 15'(lb_we_spr ? lb_wa : lb_x);
+assign lb_i.a_d    = lb_we_spr ? lb_wd : 8'd0;
+assign lb_i.a_we   = lb_we_spr | lb_we_clr;
+assign lb_i.b_addr = 15'(lb_x);
+assign lb_i.b_d    = 8'd0;
+assign lb_i.b_we   = 1'b0;
+assign lb_q = lb_o.b_q;
 
 // ---------------------------------------------------------------- video: color out
 
@@ -815,7 +750,7 @@ reg  [3:0] lb_pix = 4'd0;
 always @(posedge clk) if (ph == 3'd3) lb_pix <= lb_q[3:0];
 
 // sprites hidden on line buffer pixels 0-7 and 248-255 (lisper's MOB gating: first char after 256H falls and
-// the first char of 256HD; MAME clips 248-255)
+// the first char of 256HD; 248-255 clipped)
 wire       spr_on = vis && lb_pix[1:0] != 2'd0 && lb_x[7:3] != 5'd0 && lb_x[7:3] != 5'd31;
 wire [3:0] c_idx  = spr_on ? {2'b11, lb_pix[1:0]} : {2'b01, pen};
 wire [3:0] c_val  = cram[c_idx];
@@ -827,12 +762,8 @@ wire       q_x    = crt_flip ? ~lb_x[7] : lb_x[7];
 wire [2:0] w_scol = {upright, vline[7], q_x};
 wire [6:0] w_idx  = spr_on ? {w_scol, lb_pix[1:0], 2'b00} : {sh_wcol, 2'b00, pen};
 wire [7:0] cprom_q;
-dpram_dc #(.widthad_a(8)) color_prom
-(
-    .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00141), .q_a(),
-    .clock_b(clk), .address_b(v_maze ? {4'd0, ~m_val[3:0]} : {1'b0, w_idx}), .q_b(cprom_q)
-);
+assign rom_p1_a = v_maze ? {4'd0, ~m_val[3:0]} : {1'b0, w_idx};
+assign cprom_q = rom_p1_q;
 
 function automatic [7:0] w3(input [2:0] b);          // Millipede resistor weights 0x21 / 0x47 / 0x97
     w3 = (b[0] ? 8'h21 : 8'h00) + (b[1] ? 8'h47 : 8'h00) + (b[2] ? 8'h97 : 8'h00);
@@ -871,7 +802,7 @@ always @(posedge clk) if (ce_pix) begin
         else begin
             video_r <= {8{cprom_q[2]}}; video_g <= {8{cprom_q[1]}}; video_b <= {8{cprom_q[0]}};
         end
-    end else if (v_maze) begin                       // ~PROM[~data & 0F] through milliped_set_color
+    end else if (v_maze) begin                       // ~PROM[~data & 0F] through the palette PROM
         video_r <= w3(cprom_q[7:5]);
         video_g <= w3({cprom_q[4:3], 1'b0});
         video_b <= w3(cprom_q[2:0]);
@@ -888,5 +819,53 @@ always @(posedge clk) if (ce_pix) begin
     else if (hcnt == hs_on + 9'h020) video_hs <= 1'b0;
     video_vs <= (lc >= vs_start && lc < vs_start + vs_len) || (vs_start + vs_len > frame_lines && lc < vs_start + vs_len - frame_lines);
 end
+
+
+// pool slot inputs (driven here, after every signal they use is declared)
+assign t65_0_i.res_n  = cpu_reset_n & ~v_bull;
+assign t65_0_i.enable = cpu_ce;
+assign t65_0_i.rdy    = 1'b1;
+assign t65_0_i.irq_n  = irq_n;
+assign t65_0_i.nmi_n  = 1'b1;
+assign t65_0_i.di     = cpu_din;
+assign s2650_0_i.reset = ~cpu_reset_n | ~v_bull;
+assign s2650_0_i.ack   = s26_ack;
+assign s2650_0_i.dr    = s26_dr;
+assign s2650_0_i.irq   = 1'b0;
+assign s2650_0_i.sense = 1'b0;
+assign pokey_i[0].reset_n = cpu_reset_n;
+assign pokey_i[0].ce      = pk_ce;
+assign pokey_i[0].wr_en   = pk1_w;
+assign pokey_i[0].addr    = pk1_w ? pk1_wa : bus_a[3:0];
+assign pokey_i[0].din     = pk1_wd;
+assign pokey_i[0].pot_in  = pot_cmp;
+assign pokey_i[1].reset_n = cpu_reset_n;
+assign pokey_i[1].ce      = pk_ce & map_m;
+assign pokey_i[1].wr_en   = pk2_w;
+assign pokey_i[1].addr    = pk2_w ? pk2_wa : bus_a[3:0];
+assign pokey_i[1].din     = pk2_wd;
+assign pokey_i[1].pot_in  = 8'h00;
+assign ay_0_i.rst_n  = cpu_reset_n;
+assign ay_0_i.ce     = ay_cen;
+assign ay_0_i.bdir   = ay_bdir;
+assign ay_0_i.bc1    = ay_bc1;
+assign ay_0_i.din    = ay_din;
+assign ay_0_i.ioa_in = lfsr[7:0];
+assign ay_0_i.iob_in = 8'hFF;
+assign sn_0_i.rst  = ~cpu_reset_n;
+assign sn_0_i.ce   = ay_cen;
+assign sn_0_i.wr_n = ~(s26_acc & ~s26_mio & s26_wr & ~s26_ene & s26_dc);
+assign sn_0_i.cs_n = 1'b0;
+assign sn_0_i.din  = s26_dw;
+assign eeprom_0_i.reset    = reset;
+assign eeprom_0_i.clear    = 1'b0;
+assign eeprom_0_i.wr       = eep_wr;
+assign eeprom_0_i.di       = eep_di;
+assign eeprom_0_i.sk       = eep_sk;
+assign eeprom_0_i.cs       = eep_cs;
+assign eeprom_0_i.ext_sel  = nv_sel & v_multi;
+assign eeprom_0_i.ext_addr = nv_addr[6:0];
+assign eeprom_0_i.ext_din  = nv_din;
+assign eeprom_0_i.ext_we   = nv_we & ~nv_addr[7] & v_multi;
 
 endmodule

@@ -44,9 +44,24 @@ module ccastles_board
     input         [7:0] tb1_x, tb1_y,   // trackball counters, player 1 / 2
     input         [7:0] tb2_x, tb2_y,
 
-    input        [24:0] ioctl_addr,
-    input         [7:0] ioctl_dout,
-    input               ioctl_wr0,
+
+    // shared CPU / sound chips, ROM blocks and board RAM pool in the dispatcher rtl/centipede_board.sv
+    output chip_pool_pkg::t65_i_t          t65_0_i,
+    input  chip_pool_pkg::t65_o_t          t65_0_o,
+    output chip_pool_pkg::pokey_i_t  [1:0] pokey_i,        // this board's POKEY 1 / 2
+    input  chip_pool_pkg::pokey_o_t  [1:0] pokey_o,
+    output       [15:0] rom_prog_a,     // shared ROM blocks (read ports): program, graphics, PROMs
+    input         [7:0] rom_prog_q,
+    output       [12:0] rom_gfx_a,
+    input         [7:0] rom_gfx_lo_q, rom_gfx_hi_q,
+    output        [7:0] rom_sync_a,
+    input         [7:0] rom_sync_q,
+    output        [7:0] rom_p1_a,       // PROM at 0x14100 (colour / write-protect)
+    input         [7:0] rom_p1_q,
+    output        [7:0] rom_p2_a,       // PROM at 0x14200 (priority)
+    input         [7:0] rom_p2_q,
+    output ram_pool_pkg::pram_i_t [5:0] pr_i,
+    input  ram_pool_pkg::pram_o_t [5:0] pr_o,
 
     input               crt_flip,
     input  signed [3:0] h_adj,          // CRT position: HSYNC moved 2 pixels per step
@@ -92,15 +107,11 @@ end
 
 // sync PROM 7K at V: bit 0 VBLANK, bit 3 IRQCK (IRQ on its rising edge)
 wire [7:0] sync_q;
-dpram_dc #(.widthad_a(8)) sync_prom
-(
-    .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00140), .q_a(),
-    .clock_b(clk), .address_b(vcnt), .q_b(sync_q)
-);
+assign rom_sync_a = vcnt;
+assign sync_q = rom_sync_q;
 wire vblank = sync_q[0];
 
-reg  [7:0] vb_end = 8'd24;                          // first visible line (MAME finds it in the PROM)
+reg  [7:0] vb_end = 8'd24;                          // first visible line (read from the sync PROM)
 reg        vb_d = 1'b1, irqck_d = 1'b0;
 always @(posedge clk) if (ce_pix && hcnt == 9'd2) begin
     vb_d    <= vblank;
@@ -130,22 +141,9 @@ wire        cpu_rw_n;
 reg         irq_n = 1'b1;
 wire        we = cpu_ce & ~cpu_rw_n;
 
-T65 cpu
-(
-    .Mode(2'b00),
-    .Res_n(cpu_reset_n),
-    .Enable(cpu_ce),
-    .Clk(clk),
-    .Rdy(1'b1),
-    .Abort_n(1'b1),
-    .IRQ_n(irq_n),
-    .NMI_n(1'b1),
-    .SO_n(1'b1),
-    .R_W_n(cpu_rw_n),
-    .A(cpu_a24),
-    .DI(cpu_din),
-    .DO(cpu_dout)
-);
+assign cpu_rw_n = t65_0_o.rw;
+assign cpu_a24  = {8'd0, t65_0_o.a};
+assign cpu_dout = t65_0_o.dout;
 
 // ---------------------------------------------------------------- address decode
 
@@ -196,7 +194,7 @@ always @(posedge clk) begin
     else if (irq_edge)        irq_n <= 1'b0;
 end
 
-// watchdog: 8 frames (MAME set_vblank_count 8)
+// watchdog: 8 frames
 reg vbw_d = 1'b0;
 always @(posedge clk) begin
     vbw_d <= vblank;
@@ -213,16 +211,12 @@ end
 
 wire [15:0] rom_addr = (bank1 && a[15:13] != 3'b111) ? a - 16'h8000 : a;   // bank 1: region 10000 at 2000
 wire  [7:0] rom_q;
-dpram_dc #(.widthad_a(16)) prog_rom
-(
-    .clock_a(clk), .address_a(ioctl_addr[15:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:16] == 9'd0), .q_a(),
-    .clock_b(clk), .address_b(rom_addr), .q_b(rom_q)
-);
+assign rom_prog_a = rom_addr;
+assign rom_q = rom_prog_q;
 
 // ---------------------------------------------------------------- bitmap DRAM
 
-// 16K words of 4 pixels; a CPU write goes through the write-protect PROM (MAME write_vram) one nibble at a time.
+// 16K words of 4 pixels; a CPU write goes through the write-protect PROM one nibble at a time.
 // Bit mode: address from the X/Y latches ({Y, X[7:1]}), pixel = X[0], auto-increment after each access.
 reg  [7:0] bx = 8'd0, by = 8'd0;
 wire [14:0] ea = sel_bitmd ? {by, bx[7:1]} : a[14:0];
@@ -236,12 +230,8 @@ wire        dram_we = we & sel_dram;
 wire  [7:0] dram_byte = ea[0] ? od_q : ev_q;
 wire  [7:0] dram_rd = sel_bitmd ? {bx[0] ? dram_byte[7:4] : dram_byte[3:0], 4'hF} : dram_byte;
 
-dpram_dc #(.widthad_a(8)) wp_prom
-(
-    .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00141), .q_a(),
-    .clock_b(clk), .address_b(wp_idx), .q_b(wp_q)
-);
+assign rom_p1_a = wp_idx;
+assign wp_q = rom_p1_q;
 
 always @(posedge clk) begin
     if (sys_reset) begin bx <= 8'd0; by <= 8'd0; end
@@ -256,29 +246,44 @@ end
 // video side: the byte of the line / pixel being fetched
 reg  [13:0] v_waddr;
 wire  [7:0] v_ev, v_od;
-dpram_dc #(.widthad_a(14)) dram_even
-(
-    .clock_a(clk), .address_a(ea[14:1]), .data_a(ev_w), .wren_a(dram_we), .q_a(ev_q),
-    .clock_b(clk), .address_b(v_waddr), .q_b(v_ev)
-);
-dpram_dc #(.widthad_a(14)) dram_odd
-(
-    .clock_a(clk), .address_a(ea[14:1]), .data_a(od_w), .wren_a(dram_we), .q_a(od_q),
-    .clock_b(clk), .address_b(v_waddr), .q_b(v_od)
-);
+// board RAMs = pool blocks 0-5 in the dispatcher (0 / 1 bitmap even / odd, 2 sprite RAM, 3 line buffer,
+// 4 NVRAM, 5 NVRAM shadow)
+ram_pool_pkg::pram_i_t ev_i, od_i, sr_i, lb_i, nv_i, ns_i;
+ram_pool_pkg::pram_o_t ev_o, od_o, sr_o, lb_o, nv_o, ns_o;
+assign pr_i = {ns_i, nv_i, lb_i, sr_i, od_i, ev_i};
+assign {ns_o, nv_o, lb_o, sr_o, od_o, ev_o} = pr_o;
+assign ev_i.a_addr = 15'(ea[14:1]);
+assign ev_i.a_d    = ev_w;
+assign ev_i.a_we   = dram_we;
+assign ev_i.b_addr = 15'(v_waddr);
+assign ev_i.b_d    = 8'd0;
+assign ev_i.b_we   = 1'b0;
+assign ev_q = ev_o.a_q;
+assign v_ev = ev_o.b_q;
+assign od_i.a_addr = 15'(ea[14:1]);
+assign od_i.a_d    = od_w;
+assign od_i.a_we   = dram_we;
+assign od_i.b_addr = 15'(v_waddr);
+assign od_i.b_d    = 8'd0;
+assign od_i.b_we   = 1'b0;
+assign od_q = od_o.a_q;
+assign v_od = od_o.b_q;
 
 // ---------------------------------------------------------------- static RAM, NVRAM, colors
 
 reg  [11:0] spr_addr;
 wire  [7:0] sram_q, spr_q;
-dpram_dc #(.widthad_a(12)) sram
-(
-    .clock_a(clk), .address_a(a[11:0]), .data_a(cpu_dout), .wren_a(we & sel_sram), .q_a(sram_q),
-    .clock_b(clk), .address_b(spr_addr), .q_b(spr_q)
-);
+assign sr_i.a_addr = 15'(a[11:0]);
+assign sr_i.a_d    = cpu_dout;
+assign sr_i.a_we   = we & sel_sram;
+assign sr_i.b_addr = 15'(spr_addr);
+assign sr_i.b_d    = 8'd0;
+assign sr_i.b_we   = 1'b0;
+assign sram_q = sr_o.a_q;
+assign spr_q = sr_o.b_q;
 
 // X2212 pair (4B low nibble, 4A high nibble): static RAM the CPU sees + EEPROM shadow. RECALL (9C00 write) copies
-// shadow -> RAM, STORE (OUT0 Q3 high with Q2 low, rising) copies RAM -> shadow (MAME nvram_recall_w / nvram_store_w).
+// shadow -> RAM, STORE (OUT0 Q3 high with Q2 low, rising) copies RAM -> shadow.
 // The NVRAM file is the shadow; it is also recalled when reset ends.
 wire [7:0] nv_q, nvr_q, nve_q;
 reg  [8:0] cp_cnt = 9'd0;                           // 0-511: address = cnt[8:1], cnt[0] = write phase
@@ -295,22 +300,26 @@ always @(posedge clk) begin
     else if ((rst_d && !sys_reset) || wr_recall) begin cp_busy <= 1'b1; cp_store <= 1'b0; cp_cnt <= 9'd0; end
     else if (store_now && !store_d)              begin cp_busy <= 1'b1; cp_store <= 1'b1; cp_cnt <= 9'd0; end
 end
-dpram_dc #(.widthad_a(8)) nv_ram
-(
-    .clock_a(clk), .address_a(a[7:0]), .data_a(cpu_dout), .wren_a(we & sel_nv), .q_a(nv_q),
-    .clock_b(clk), .address_b(cp_cnt[8:1]), .data_b(nve_q), .wren_b(cp_busy & ~cp_store & cp_cnt[0]), .q_b(nvr_q)
-);
-dpram_dc #(.widthad_a(8)) nv_shadow
-(
-    .clock_a(clk), .address_a(nv_we ? nv_addr : cp_cnt[8:1]), .data_a(nv_we ? nv_din : nvr_q),
-    .wren_a(nv_we | (cp_busy & cp_store & cp_cnt[0])), .q_a(),
-    .clock_b(clk), .address_b(cp_busy ? cp_cnt[8:1] : nv_addr), .q_b(nve_q)
-);
+assign nv_i.a_addr = 15'(a[7:0]);
+assign nv_i.a_d    = cpu_dout;
+assign nv_i.a_we   = we & sel_nv;
+assign nv_i.b_addr = 15'(cp_cnt[8:1]);
+assign nv_i.b_d    = nve_q;
+assign nv_i.b_we   = cp_busy & ~cp_store & cp_cnt[0];
+assign nv_q = nv_o.a_q;
+assign nvr_q = nv_o.b_q;
+assign ns_i.a_addr = 15'(nv_we ? nv_addr : cp_cnt[8:1]);
+assign ns_i.a_d    = nv_we ? nv_din : nvr_q;
+assign ns_i.a_we   = nv_we | (cp_busy & cp_store & cp_cnt[0]);
+assign ns_i.b_addr = 15'(cp_busy ? cp_cnt[8:1] : nv_addr);
+assign ns_i.b_d    = 8'd0;
+assign ns_i.b_we   = 1'b0;
+assign nve_q = ns_o.b_q;
 assign nv_dout = nve_q;
 
 // 32 colors: R = {A5, D7, D6}, B = D5-D3, G = D2-D0, inverted, 22k / 10k / 4.7k with 1k pull-down (MAME weights)
 reg  [8:0] cram[32];
-initial for (int i = 0; i < 32; i++) cram[i] = 9'h1FF;   // black until written (MAME palette)
+initial for (int i = 0; i < 32; i++) cram[i] = 9'h1FF;   // black until written (palette power-on state)
 always @(posedge clk) if (wr_color) cram[a[4:0]] <= {a[5], cpu_dout};
 
 function automatic [7:0] lvl(input [2:0] b);
@@ -336,33 +345,13 @@ wire [7:0] in0_v = {in0[7:6], vblank, in0[4:0]};
 
 wire [3:0] p1c0, p1c1, p1c2, p1c3, p2c0, p2c1, p2c2, p2c3;
 wire [7:0] pk1_q, pk2_q;
-// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey1
-pokey_glue pokey1
-(
-    .clk(clk), .ce(cpu_ce), .enable_179(1'b1), .addr(a[3:0]), .data_in(cpu_dout),
-    .wr_en(~cpu_rw_n & sel_pk1), .reset_n(cpu_reset_n),
-    .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
-    .pot_in(8'h00), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
-    .data_out(pk1_q),
-    .channel_0_out(p1c0), .channel_1_out(p1c1), .channel_2_out(p1c2), .channel_3_out(p1c3),
-    .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
-);
-// POKEY-SWAP-REVERT-2026-10-14: original line: pokey pokey2
-pokey_glue pokey2
-(
-    .clk(clk), .ce(cpu_ce), .enable_179(1'b1), .addr(a[3:0]), .data_in(cpu_dout),
-    .wr_en(~cpu_rw_n & sel_pk2), .reset_n(cpu_reset_n),
-    .keyboard_scan_enable(1'b0), .keyboard_scan(), .keyboard_response(2'b11),
-    .pot_in(8'h00), .sio_in1(1'b1), .sio_in2(1'b1), .sio_in3(1'b1),
-    .data_out(pk2_q),
-    .channel_0_out(p2c0), .channel_1_out(p2c1), .channel_2_out(p2c2), .channel_3_out(p2c3),
-    .irq_n_out(), .sio_out1(), .sio_out2(), .sio_out3(),
-    .sio_clockin_in(1'b1), .sio_clockin_out(), .sio_clockin_oe(), .sio_clockout(), .pot_reset(), .pot_count()
-);
-wire [7:0] pk2_rd = (a[3:0] == 4'h8) ? in1 : pk2_q;   // MAME pokey2 allpot_r = IN1
+assign pk1_q = pokey_o[0].dout;
+assign {p1c3, p1c2, p1c1, p1c0} = {pokey_o[0].ch3, pokey_o[0].ch2, pokey_o[0].ch1, pokey_o[0].ch0};
+assign pk2_q = pokey_o[1].dout;
+assign {p2c3, p2c2, p2c1, p2c0} = {pokey_o[1].ch3, pokey_o[1].ch2, pokey_o[1].ch1, pokey_o[1].ch0};
+wire [7:0] pk2_rd = (a[3:0] == 4'h8) ? in1 : pk2_q;   // POKEY 2 ALLPOT = IN1
 
-// POKEY resistor DAC (MAME vol_init, see centiped_board.sv); MAME's OPAMP_C_TO_GROUND stage has no low-pass, only the
+// POKEY resistor DAC (see centiped_board.sv); the output stage has no low-pass, only the
 // high-pass after it (DC removal here, ~7 Hz)
 function automatic [7:0] pk_dac(input [3:0] v);
     case (v)
@@ -400,7 +389,7 @@ end
 // ---------------------------------------------------------------- sprites
 
 // During line V the engine fills the line buffer for line V+1: clear to 0F, then the 40 entries of the selected
-// list (picture, vertical, priority, horizontal), drawn in order with pen 7 transparent (MAME screen_update).
+// list (picture, vertical, priority, horizontal), drawn in order with pen 7 transparent.
 // 8x16, 3 planes: 8D low nibble = plane 2, 8B high / low nibble = planes 1 / 0; two bytes per row.
 // mx / my mirror the picture for CRT flip; PLAYER2 flips the sprite images (positions are the game's).
 wire       mx = crt_flip, my = crt_flip;
@@ -487,29 +476,22 @@ always @(posedge clk) begin
     endcase
 end
 
-dpram_dc #(.widthad_a(13)) gfx_8d
-(
-    .clock_a(clk), .address_a(ioctl_addr[12:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:13] == 12'h008), .q_a(),
-    .clock_b(clk), .address_b(g_addr), .q_b(gfx_lo_q)
-);
-dpram_dc #(.widthad_a(13)) gfx_8b
-(
-    .clock_a(clk), .address_a(ioctl_addr[12:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:13] == 12'h009), .q_a(),
-    .clock_b(clk), .address_b(g_addr), .q_b(gfx_hi_q)
-);
+assign rom_gfx_a = g_addr;
+assign gfx_lo_q = rom_gfx_lo_q;
+assign gfx_hi_q = rom_gfx_hi_q;
 
 wire [7:0] lb_q;
-dpram_dc #(.widthad_a(9)) line_buf
-(
-    .clock_a(clk), .address_a(lb_wa), .data_a({4'd0, lb_wd}), .wren_a(lb_we), .q_a(),
-    .clock_b(clk), .address_b({vcnt[0], hcnt[7:0]}), .q_b(lb_q)
-);
+assign lb_i.a_addr = 15'(lb_wa);
+assign lb_i.a_d    = {4'd0, lb_wd};
+assign lb_i.a_we   = lb_we;
+assign lb_i.b_addr = 15'({vcnt[0], hcnt[7:0]});
+assign lb_i.b_d    = 8'd0;
+assign lb_i.b_we   = 1'b0;
+assign lb_q = lb_o.b_q;
 
 // ---------------------------------------------------------------- bitmap, priority, color
 
-// MAME: effy = ((y - vblank_end) + (flip ? 0 : vscroll)) ^ flip, at least 24; effx = (hscroll + (x ^ flip))
+// effy = ((y - vblank_end) + (flip ? 0 : vscroll)) ^ flip, at least 24; effx = (hscroll + (x ^ flip))
 wire [7:0] s_y   = my ? 8'd23 - vcnt : vcnt;
 wire [7:0] xg    = mx ? ~hcnt[7:0] : hcnt[7:0];
 wire [7:0] ey0   = (s_y - vb_end) + (player2 ? 8'd0 : vscroll);
@@ -525,20 +507,15 @@ always @(posedge clk) if (pc == 4'd2) begin
     mopix <= lb_q[3:0];
 end
 
-dpram_dc #(.widthad_a(8)) pri_prom
-(
-    .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout),
-    .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00142), .q_a(),
-    .clock_b(clk), .address_b({3'b010, mopix[2:0], mopix[3], pix[3]}), .q_b(pri_q)
-);
+assign rom_p2_a = {3'b010, mopix[2:0], mopix[3], pix[3]};
+assign pri_q = rom_p2_q;
 
 wire [4:0] cidx = {pri_q[0], pri_q[1] ? mopix : pix};
 wire [8:0] cval = cram[cidx];
 
 
-// HSYNC H 304-319 (MAME), VSYNC lines 4-6, moved by h_adj / v_adj. Windows are taken modulo the line (320) and
-// frame (256): an end compare of 304 + 16 = 320 never matched H 0-319, so HSYNC stuck high (HW 2026-10-13: no picture,
-// screenshots failed)
+// HSYNC H 304-319, VSYNC lines 4-6, moved by h_adj / v_adj. Windows are taken modulo the line (320) and
+// frame (256): an end compare of 304 + 16 = 320 never matched H 0-319, so HSYNC would stick high
 wire [8:0] hs_on  = 9'd304 + {{4{h_adj[3]}}, h_adj, 1'b0};             // 290-318
 wire [8:0] hs_rel = (hcnt >= hs_on) ? hcnt - hs_on : hcnt + 9'd320 - hs_on;
 wire [7:0] vs_on  = 8'd4 + {{4{v_adj[3]}}, v_adj};
@@ -557,5 +534,26 @@ always @(posedge clk) if (ce_pix) begin
     video_hs <= hs_rel < 9'd16;
     if (line_start) video_vs <= vs_rel < 8'd3;
 end
+
+
+// pool slot inputs (driven here, after every signal they use is declared)
+assign t65_0_i.res_n  = cpu_reset_n;
+assign t65_0_i.enable = cpu_ce;
+assign t65_0_i.rdy    = 1'b1;
+assign t65_0_i.irq_n  = irq_n;
+assign t65_0_i.nmi_n  = 1'b1;
+assign t65_0_i.di     = cpu_din;
+assign pokey_i[0].reset_n = cpu_reset_n;
+assign pokey_i[0].ce      = cpu_ce;
+assign pokey_i[0].wr_en   = ~cpu_rw_n & sel_pk1;
+assign pokey_i[0].addr    = a[3:0];
+assign pokey_i[0].din     = cpu_dout;
+assign pokey_i[0].pot_in  = 8'h00;
+assign pokey_i[1].reset_n = cpu_reset_n;
+assign pokey_i[1].ce      = cpu_ce;
+assign pokey_i[1].wr_en   = ~cpu_rw_n & sel_pk2;
+assign pokey_i[1].addr    = a[3:0];
+assign pokey_i[1].din     = cpu_dout;
+assign pokey_i[1].pot_in  = 8'h00;
 
 endmodule
