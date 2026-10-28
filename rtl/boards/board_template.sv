@@ -3,7 +3,7 @@
 //  Copyright (C) 2026 Rodimus
 //
 //  Boards never instantiate a CPU, sound chip, ROM store or board RAM. They live ONCE in the dispatcher
-//  rtl/centipede_board.sv: 6502 t65_0, POKEYs pokey_0-2 (POT_CMP is per slot: 0 = 0F, 1-2 = 00), S2650 s2650_0,
+//  rtl/centipede_dispatcher.sv: 6502 t65_0, POKEYs pokey_0-2 (POT_CMP is per slot: 0 = 0F, 1-2 = 00), S2650 s2650_0,
 //  AY-3-8910 ay_0, SN76489 sn_0, 93C46 eeprom_0 (chip_pool_pkg buses), the shared ROM blocks (index 0: program
 //  0x00000, graphics 0x10000 / 0x12000, PROMs 0x14000 / 0x14100 / 0x14200) and the 6 board RAM pool blocks
 //  (ram_pool_pkg: 0-1 = 16K, 2 = 4K, 3 = 512, 4-5 = 256).

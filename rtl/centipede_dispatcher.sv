@@ -13,7 +13,7 @@
 //
 //============================================================================
 
-module centipede_board
+module centipede_dispatcher
 (
     input               clk,
     input               reset,

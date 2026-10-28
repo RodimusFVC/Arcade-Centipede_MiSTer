@@ -45,7 +45,7 @@ module ccastles_board
     input         [7:0] tb2_x, tb2_y,
 
 
-    // shared CPU / sound chips, ROM blocks and board RAM pool in the dispatcher rtl/centipede_board.sv
+    // shared CPU / sound chips, ROM blocks and board RAM pool in the dispatcher rtl/centipede_dispatcher.sv
     output chip_pool_pkg::t65_i_t          t65_0_i,
     input  chip_pool_pkg::t65_o_t          t65_0_o,
     output chip_pool_pkg::pokey_i_t  [1:0] pokey_i,        // this board's POKEY 1 / 2

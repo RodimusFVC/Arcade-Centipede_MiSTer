@@ -1,2 +1,0 @@
-rtl/chip_pool_pkg.sv
-rtl/ram_pool_pkg.sv

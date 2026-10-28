@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate MRAs for the Centipede core straight from MAME centiped.cpp.
 
-Region placement matches rtl/centipede_board.sv (shared ROM blocks); images are copied as dumped (descrambling happens in the core).
+Region placement matches rtl/centipede_dispatcher.sv (shared ROM blocks); images are copied as dumped (descrambling happens in the core).
 DIP switches and the input map come from the set's MAME INPUT_PORTS.
 
 DIP space: every DIP field of every port is packed into 3 bytes (Main_MiSTer only keeps 3 default bytes reliably,

@@ -546,7 +546,7 @@ arcade_video #(256,24) arcade_video
 
 ///////////////                 Board                  ////////////////
 
-centipede_board boards
+centipede_dispatcher boards
 (
 	.clk(CLK_48M), .reset(reset), .v_cc(v_cc), .pause(pause_cpu), .variant(game_var),
 	.in0(in_port[0]), .in1(in_port[1]), .in2(in_port[2]), .in3(in_port[3]), .dsw1(in_port[4]), .dsw2(in_port[5]),
