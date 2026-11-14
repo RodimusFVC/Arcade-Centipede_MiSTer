@@ -20,6 +20,8 @@ import xml.etree.ElementTree as ET
 import re
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "RodimusCoresMaster_MiSTer" / "tools"))
+import mra_tidy                                     # noqa: E402  fleet MRA comment format
 
 MAME_VERSION = "0289"
 RBF = "Centipede"
@@ -758,7 +760,7 @@ def mra(g, games, segs, build_inputs, with_art=False):
     ports = build_inputs(g["inputs"])
     cfg, idle, dips, ddef, imap, buttons, flags = config_bytes(g, ports)
     nbtn = max(buttons) if buttons else 0
-    names = ",".join([buttons.get(i, "Not Used").replace(",", " ") for i in range(1, 5)] + ["Coin", "Start 1P", "Start 2P", "Pause"])
+    names = ",".join([buttons.get(i, "-").replace(",", " ") for i in range(1, 5)] + ["Coin", "Start 1P", "Start 2P", "Pause"])
     parent = g["parent"] or g["name"]
     zips = [g["name"]] + ([g["parent"]] if g["parent"] else [])
     for s in segs:
@@ -814,7 +816,7 @@ def mra(g, games, segs, build_inputs, with_art=False):
     <joystick>8-way</joystick>
     <special_controls>{"trackball" if flags & F_TB else "paddle" if flags & F_PADDLE else "analog stick" if flags & F_STICK else ""}</special_controls>
     <num_buttons>{nbtn}</num_buttons>
-    <buttons names="{names}" default="A,B,X,Y,Select,Start,R,L"/>
+    <buttons names="{names}" default="{mra_tidy.button_defaults(names)}"/>
 
     <switches default="{",".join(f"{b:02X}" for b in ddef)}">
 {dip_lines}
@@ -888,7 +890,7 @@ def main():
         for root, with_art in [(out_dir, False)] + ([(out_dir / "_artwork", True)] if art_name(g) else []):
             path = out_path(root, g, games)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(mra(g, games, segs, build_inputs, with_art))
+            path.write_text(mra_tidy.tidy(mra(g, games, segs, build_inputs, with_art)))
             print(f'{name:12s} {path.relative_to(out_dir)}')
 
 

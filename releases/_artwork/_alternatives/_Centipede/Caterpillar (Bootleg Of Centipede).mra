@@ -25,7 +25,7 @@
     <joystick>8-way</joystick>
     <special_controls>trackball</special_controls>
     <num_buttons>1</num_buttons>
-    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+    <buttons names="Fire,-,-,-,Coin,Start 1P,Start 2P,Pause" default="A,Select,Start,R,L"/>
 
     <switches default="56,08,00">
         <dip name="Cabinet" bits="0" ids="Upright,Cocktail"/>
@@ -41,7 +41,7 @@
         <dip name="Bonus Coins" bits="15,17" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins" values="0,1,2,3,4,5"/>
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
+    <!-- Index 0: ROM -->
     <rom index="0" md5="none" zip="caterplr.zip|centiped.zip">
         <part repeat="0x2000">00</part>
         <part crc="8a744e57" name="olympia.c28"/>
@@ -56,7 +56,7 @@
         <part crc="6fa3093a" name="136001-213.p4"/>
     </rom>
 
-    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <!-- Index 1: Config -->
     <rom index="1">
         <part>
             03 11 02 00 20 FF 00 FF 54 02 00 00 00 00 00 00
@@ -66,12 +66,11 @@
         </part>
     </rom>
 
-    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <!-- Index 4: NVRAM -->
     <rom index="4"></rom>
     <nvram index="4" size="64"></nvram>
 
-    <!-- Index 5: MAME artwork, layout table (from default.lay) + PNGs from the artwork zip, as-is -->
-    <!-- OSD Artwork: View 1 = Upright Artwork, View 2 = Upright Artwork Euro, View 3 = Cocktail Artwork, View 4 = XBLA Artwork, View 5 = Atari Classics Artwork, View 6 = Atari Classics Vertical, View 7 = Hausjam Artwork -->
+    <!-- Index 5: Artwork -->
     <rom index="5" md5="none" zip="/mame-artwork/centiped.zip">
         <part>
             41 57 07 00 0E 00 00 01 F0 00 01 00 00 00 00 00 4C 03 2C 03 E0 00 A8 00 80 01 00 02 00 50 01 00

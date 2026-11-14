@@ -3,8 +3,8 @@
 //  93C46 serial EEPROM, 8-bit organisation (128 x 8)
 //  Copyright (C) 2026 Rodimus
 //
-//  Behaviour follows MAME eepromser.cpp / eeprom.cpp (eeprom_serial_93cxx_device):
-//  start bit, 2 opcode + 7 address bits, READ = dummy 0 then 8 data bits, WRITE / ERASE / ERAL / WRAL refused
+// Based on MAME eepromser.cpp, eeprom.cpp (Aaron Giles, BSD-3-Clause)
+//  Behaviour: start bit, 2 opcode + 7 address bits, READ = dummy 0 then 8 data bits, WRITE / ERASE / ERAL / WRAL refused
 //  while locked (EWDS state at reset), WRAL ANDs into the cells, busy 1.75 ms write / 1 ms erase / 8 ms all.
 //  DO reads READY while waiting for a start bit, the data bit while reading, otherwise 1 (pull-up).
 //

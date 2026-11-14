@@ -25,7 +25,7 @@
     <joystick>8-way</joystick>
     <special_controls>trackball</special_controls>
     <num_buttons>1</num_buttons>
-    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+    <buttons names="Fire,-,-,-,Coin,Start 1P,Start 2P,Pause" default="A,Select,Start,R,L"/>
 
     <switches default="0A,41,01">
         <dip name="Cabinet" bits="0" ids="Upright,Cocktail"/>
@@ -41,7 +41,7 @@
         <dip name="Credit Minimum" bits="17" ids="1,2"/>
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
+    <!-- Index 0: ROM -->
     <rom index="0" md5="none" zip="magworm.zip|centiped.zip">
         <part repeat="0x2000">00</part>
         <part crc="a88e970a" name="11005-0.k0"/>
@@ -56,7 +56,7 @@
         <part crc="6fa3093a" name="136001-213.p4"/>
     </rom>
 
-    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <!-- Index 1: Config -->
     <rom index="1">
         <part>
             04 19 01 00 20 FF 00 FF 42 50 00 00 00 00 00 00
@@ -66,13 +66,14 @@
         </part>
     </rom>
 
-    <!-- Index 3: hiscore config (MAME hiscore.dat), index 4: saved scores -->
+    <!-- Index 3: Hiscore -->
     <rom index="3" md5="none">
         <part>
             00 18 A8 00 00 FF 00 02 00 02 00 01 11 11 00 00
             00 00 00 02 00 30 52 1A
         </part>
     </rom>
+    <!-- Index 4: NVRAM -->
     <rom index="4"></rom>
     <nvram index="4" size="48"></nvram>
 

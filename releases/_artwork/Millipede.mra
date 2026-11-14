@@ -25,7 +25,7 @@
     <joystick>8-way</joystick>
     <special_controls>trackball</special_controls>
     <num_buttons>1</num_buttons>
-    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+    <buttons names="Fire,-,-,-,Coin,Start 1P,Start 2P,Pause" default="A,Select,Start,R,L"/>
 
     <switches default="C4,14,02">
         <dip name="Language" bits="0,1" ids="English,German,French,Spanish"/>
@@ -46,7 +46,7 @@
         <dip name="Bonus Coins" bits="21,23" ids="None,3 credits/2 coins,5 credits/4 coins,6 credits/4 coins,6 credits/5 coins,4 credits/3 coins,Demo Mode" values="0,1,2,3,4,5,6"/>
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
+    <!-- Index 0: ROM -->
     <rom index="0" md5="none" zip="milliped.zip">
         <part repeat="0x4000">00</part>
         <part crc="40711675" name="136013-104.mn1"/>
@@ -61,7 +61,7 @@
         <part crc="6fa3093a" name="136001-213.e7"/>
     </rom>
 
-    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <!-- Index 1: Config -->
     <rom index="1">
         <part>
             05 11 02 00 34 73 FF FF 14 02 00 00 00 00 00 00
@@ -71,12 +71,11 @@
         </part>
     </rom>
 
-    <!-- Index 4: the board's save chip (64 bytes), restored by the game itself -->
+    <!-- Index 4: NVRAM -->
     <rom index="4"></rom>
     <nvram index="4" size="64"></nvram>
 
-    <!-- Index 5: MAME artwork, layout table (from default.lay) + PNGs from the artwork zip, as-is -->
-    <!-- OSD Artwork: View 1 = Cocktail Artwork, View 2 = XBLA Widescreen, View 3 = Atari Classics Artwork, View 4 = Atari Classics Vertical, View 5 = Hausjam Artwork -->
+    <!-- Index 5: Artwork -->
     <rom index="5" md5="none" zip="/mame-artwork/milliped.zip">
         <part>
             41 57 05 00 0C 00 00 01 F0 00 01 00 00 00 00 00 78 05 1A 04 00 02 10 01 7A 01 F8 01 00 30 02 00

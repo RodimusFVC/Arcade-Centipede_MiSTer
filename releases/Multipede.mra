@@ -25,14 +25,14 @@
     <joystick>8-way</joystick>
     <special_controls>trackball</special_controls>
     <num_buttons>1</num_buttons>
-    <buttons names="Fire,Not Used,Not Used,Not Used,Coin,Start 1P,Start 2P,Pause" default="A,B,X,Y,Select,Start,R,L"/>
+    <buttons names="Fire,-,-,-,Coin,Start 1P,Start 2P,Pause" default="A,Select,Start,R,L"/>
 
     <switches default="03,00,00">
         <dip name="Cabinet" bits="0" ids="Upright,Cocktail" values="1,0"/>
         <dip name="Service Mode" bits="1" ids="Off,On" values="1,0"/>
     </switches>
 
-    <!-- Index 0: CPU 0x00000, gfx low plane 0x10000, gfx high plane 0x12000, sync PROM 0x14000, PROMs 0x14100 -->
+    <!-- Index 0: ROM -->
     <rom index="0" md5="none" zip="multiped.zip">
         <part crc="8248d42c" name="cm_12a.bin"/>
         <part crc="45613f22" name="cm_5r.bin"/>
@@ -40,7 +40,7 @@
         <part crc="6fa3093a" name="136001-213.7e"/>
     </rom>
 
-    <!-- Index 1: board variant, flags, port idle levels, input map (see Arcade-Centipede.sv) -->
+    <!-- Index 1: Config -->
     <rom index="1">
         <part>
             06 11 02 00 30 73 FF FF 00 00 00 00 00 00 00 00
@@ -50,7 +50,7 @@
         </part>
     </rom>
 
-    <!-- Index 4: the board's save chip (128 bytes), restored by the game itself -->
+    <!-- Index 4: NVRAM -->
     <rom index="4"></rom>
     <nvram index="4" size="128"></nvram>
 

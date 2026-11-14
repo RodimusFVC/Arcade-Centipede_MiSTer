@@ -6,14 +6,15 @@ set_global_assignment -name SYSTEMVERILOG_FILE Arcade-Centipede.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/centipede_dispatcher.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/centiped/centiped_board.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ccastles/ccastles_board.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/eeprom_93c46.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/rodimus/eeprom_93c46/eeprom_93c46.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/artwork.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/art_resample.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/png_decode.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/art/inflate.sv
 
-set_global_assignment -name QIP_FILE rtl/cpu/T65/t65.qip
-set_global_assignment -name QIP_FILE rtl/sound/pokey_cx/pokey_cx.qip
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/rodimus/t65sv/t65sv_all.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/rodimus/pokey_cx/pokey_cx.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/rodimus/pokey_cx/pokey_glue.sv
 set_global_assignment -name QIP_FILE rtl/sound/jt49/hdl/jt49.qip
 set_global_assignment -name QIP_FILE rtl/sound/jt89/syn/quartus/jt89_verilog.qip
 set_global_assignment -name VERILOG_FILE rtl/sound/jt49/hdl/filter/jt49_dcrm2.v
@@ -25,7 +26,4 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/mister_custom/controllers.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/dpram_dc.sv
 
-set_global_assignment -name VHDL_FILE rtl/cpu/s2650/base/base_pack.vhd
-set_global_assignment -name VHDL_FILE rtl/cpu/s2650/sgs2650_pack.vhd
-set_global_assignment -name VHDL_FILE rtl/cpu/s2650/sgs2650.vhd
-set_global_assignment -name VHDL_FILE rtl/cpu/s2650/s2650_cpu.vhd
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/rodimus/s2650sv/s2650sv_all.sv

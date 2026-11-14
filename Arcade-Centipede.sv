@@ -45,11 +45,11 @@ wire        ioctl_upload_req;
 wire  [7:0] ioctl_din;
 wire        ioctl_wr;
 wire  [7:0] ioctl_index;
-wire [26:0] ioctl_addr27;                     // hps_io's full address: the artwork download can pass 32 MB
-wire [24:0] ioctl_addr = ioctl_addr27[24:0];  // every other ioctl user
+wire [26:0] ioctl_addr27;
+wire [24:0] ioctl_addr = ioctl_addr27[24:0];
 wire  [7:0] ioctl_dout;
 wire [15:0] joystick_0, joystick_1, joystick_2, joystick_3;
-wire [15:0] joystick_l_analog_0, joystick_l_analog_1, joystick_l_analog_2, joystick_l_analog_3;   // [15:8] Y, [7:0] X, signed
+wire [15:0] joystick_l_analog_0, joystick_l_analog_1, joystick_l_analog_2, joystick_l_analog_3;
 wire  [7:0] paddle_0, paddle_1, paddle_2, paddle_3;
 wire  [8:0] spinner_0, spinner_1, spinner_2, spinner_3;
 wire [21:0] gamma_bus;
@@ -74,7 +74,7 @@ assign HDMI_BOB_DEINT = 0;
 wire signed [15:0] audio;
 assign AUDIO_L = pause_cpu ? 16'd0 : audio;
 assign AUDIO_R = pause_cpu ? 16'd0 : audio;
-assign AUDIO_S = 1;   // signed
+assign AUDIO_S = 1;
 assign AUDIO_MIX = 0;
 
 assign LED_DISK  = 0;
@@ -82,24 +82,14 @@ assign LED_POWER = 0;
 assign LED_USER  = ioctl_download;
 assign BUTTONS = 0;
 
-///////////////////////////////////////////////////
-
-// MRA index 1:
-//   byte 0      board variant (see rtl/boards/centiped/centiped_board.sv)
-//   byte 2      saves: 0 none, 1 hiscore.dat (index 3 config), 2 the board's EAROM / 93C46 / X2212 (index 4 = chip image)
-//   byte 1      flags: [0] trackball game, [1] paddle game, [2] analog stick game, [3] no joystick inputs,
-//               [4] vertical, [7] vertical is ROT90
-//   bytes 4-9   idle level of every bit of IN0, IN1, IN2, IN3, DSW1, DSW2
-//   bytes 16-63 input map, one byte per port bit (bit 0 first): 0x80 | n = DIP switch bit n,
-//               1-63 = control id inverting the idle level, 0 = idle level
 reg [7:0] game_var   = 8'd0;
 reg [7:0] game_flags = 8'h11;
-reg [1:0] save_mode  = 2'd0;       // 0 none, 1 hiscore.dat RAM ranges (index 3), 2 board save chip (EAROM / EEPROM / X2212)
+reg [1:0] save_mode  = 2'd0;
 reg [7:0] port_idle[6] = '{8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF};
 reg [7:0] in_map[48];
 
-wire [2:0] idle_idx = ioctl_addr[2:0] - 3'd4;      // bytes 4-9  -> 0-5
-wire [5:0] map_idx  = ioctl_addr[5:0] - 6'd16;     // bytes 16-63 -> 0-47
+wire [2:0] idle_idx = ioctl_addr[2:0] - 3'd4;
+wire [5:0] map_idx  = ioctl_addr[5:0] - 6'd16;
 
 always @(posedge CLK_48M) begin
     if (ioctl_wr && ioctl_index == 8'd1) begin
@@ -111,7 +101,7 @@ always @(posedge CLK_48M) begin
     end
 end
 
-wire v_cc      = game_var == 8'd10 || game_var == 8'd11;   // Crystal Castles board
+wire v_cc      = game_var == 8'd10 || game_var == 8'd11;
 wire tb_game   = game_flags[0];
 wire pad_game  = game_flags[1];
 wire stk_game  = game_flags[2];
@@ -120,13 +110,12 @@ wire vert_view = game_vert & ~status[8];
 
 wire [1:0] ar = status[7:6];
 
-wire        art_fb;                // artwork framebuffer on HDMI: square canvas pixels
+wire        art_fb;
 wire        art_wait, art_avail;
 wire [11:0] art_cw, art_ch;
 assign VIDEO_ARX = (!ar) ? (art_fb ? art_cw : vert_view ? 12'd3 : 12'd4) : (ar - 1'd1);
 assign VIDEO_ARY = (!ar) ? (art_fb ? art_ch : vert_view ? 12'd4 : 12'd3) : 12'd0;
 
-// Status bits avoid the old Centipede core's 2-5, 11-16, 19-20 and 25-27 so its saved settings can't leak in
 `include "build_id.v"
 localparam CONF_STR = {
 	"CENTIPEDE;;",
@@ -166,7 +155,7 @@ localparam CONF_STR = {
 	"DIP;",
 	"-;",
 	"R0,Reset;",
-	"J1,Btn 1,Btn 2,Btn 3,Btn 4,Coin,Start 1P,Start 2P,Pause;",
+	"J1,Button 1,Button 2,Button 3,Button 4,Coin,Start 1P,Start 2P,Pause;",
 	"jn,A,B,X,Y,Select,Start,R,L;",
 	"V,v",`BUILD_DATE
 };
@@ -210,8 +199,6 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ps2_mouse(ps2_mouse)
 );
 
-////////////////////   CLOCKS   ///////////////////
-
 pll pll
 (
 	.refclk(CLK_50M),
@@ -240,11 +227,7 @@ pll_cfg pll_cfg
 	.reconfig_from_pll(reconfig_from_pll)
 );
 
-// Crystal Castles runs at 50 MHz (10 MHz x 5), the Centipede boards at 48.384 MHz (12.096 MHz x 4). The PLL's M
-// counter (register 4) and fractional K (register 7) are rewritten, C stays 9: M 9 / K 1 = 50 MHz exactly, M 8 /
-// K 3045647209 = 48.384 MHz. K must stay inside 0.05-0.95 or be ~0 (Main_MiSTer's PLL encoding;
-// K FFFFFFFF breaks the picture). Written after the ROM download, so the download never runs through
-// a relock (JunoFirst / Tutankham sequence).
+// PLL K must stay inside 0.05-0.95 or be ~0; K = FFFFFFFF breaks the picture
 reg         cfg_write = 1'b0;
 reg   [5:0] cfg_address = 6'd0;
 reg  [31:0] cfg_data = 32'd0;
@@ -275,16 +258,12 @@ always @(posedge CLK_50M) begin
 	end
 end
 
-// Hold the board in reset until the PLL is locked and the ROM download has finished
 wire reset = RESET | status[0] | buttons[1] | ioctl_download | ~locked;
-
-///////////////////         Keyboard           //////////////////
 
 wire [12:0] kb;
 /* verilator lint_off UNUSED */
-wire kbx_none;                                     // v2 extra-key output: no extra keys here
+wire kbx_none;
 /* verilator lint_on UNUSED */
-// kb: [0] up [1] down [2] left [3] right [4] ctrl [5] alt [6] 1 [7] 2 [8] 5 [9] 6 [10] 9 [11] T [12] P
 ctl_keyboard u_kb(.clk(CLK_48M), .ps2_key(ps2_key), .pause(pause_cpu), .kb(kb), .kbx(kbx_none));
 wire kb_up    = kb[0];
 wire kb_down  = kb[1];
@@ -292,10 +271,6 @@ wire kb_left  = kb[2];
 wire kb_right = kb[3];
 wire kb_pause = kb[12];
 
-//////////////////  Arcade Buttons/Interfaces   ///////////////////////////
-
-// SNAC trackball (Crystal Castles core wiring): USER_IN 0 fire / start, 1 coin (both to ground),
-// 2/3 vertical and 4/5 horizontal quadrature A/B
 wire snac_en = status[31];
 assign USER_OUT = snac_en ? 7'b0111111 : 7'b1111111;
 /* verilator lint_off UNUSED */   // user_s[5:2] unused (the SNAC decoders sync USER_IN themselves)
@@ -305,14 +280,11 @@ always @(posedge CLK_48M) begin user_s1 <= USER_IN; user_s <= user_s1; end
 wire snac_fire = snac_en & ~user_s[0];
 wire snac_coin = snac_en & ~user_s[1];
 
-// stick / d-pad drive the joystick bits, or the trackball when "Stick/D-pad Drives" is Trackball or the game
-// has no joystick (Bulls Eye Darts)
 wire stick_tb = (status[30] | game_flags[3]) & tb_game;
 
-// Joystick bits: 0 R, 1 L, 2 D, 3 U, 4-7 Btn 1-4, 8 Coin, 9 Start 1P, 10 Start 2P, 11 Pause
 wire [3:0] dir1_raw = {joystick_0[3] | kb_up, joystick_0[2] | kb_down, joystick_0[1] | kb_left, joystick_0[0] | kb_right};
 wire [3:0] dir2_raw = joystick_1[3:0];
-wire [3:0] dir1 = stick_tb ? 4'd0 : dir1_raw;      // {U, D, L, R}
+wire [3:0] dir1 = stick_tb ? 4'd0 : dir1_raw;
 wire [3:0] dir2 = stick_tb ? 4'd0 : dir2_raw;
 
 wire m_pause = joystick_0[11] | kb_pause;
@@ -322,8 +294,6 @@ wire [9:0] tb_mouse_dx, tb_mouse_dy;
 /* verilator lint_off UNUSED */
 wire [2:0] tb_mouse_btn;
 /* verilator lint_on UNUSED */
-// trackball: 12-bit counters; the board sees counter >> base (Centipede boards 1, Crystal Castles 3), -1 Fast / +1 Slow;
-// SNAC and the stick add 2^(base-1) per count; P1 X and P2 Y reversed; DIR latch per axis. Sources on one clock sum.
 ctl_mouse u_mouse(.clk(CLK_48M), .ps2_mouse(ps2_mouse), .ev(tb_mouse_ev), .dx(tb_mouse_dx), .dy(tb_mouse_dy), .btn(tb_mouse_btn));
 wire frame_tick;
 ctl_tick #(.MODE(0)) u_frame_tick(.clk(CLK_48M), .pause(pause_cpu), .vblank(vblank), .period(18'd0), .tick(frame_tick));
@@ -348,7 +318,7 @@ ctl_trackball #(.CW(12), .OUT_W(8), .MOUSE_SH(0), .SPIN_SH(0), .STICK_RSH(3), .D
 	.tick(frame_tick), .stick_en(stick_tb), .stick(joystick_l_analog_1), .dpad(dir2_raw),
 	.x(tb2x_o), .y(tb2y_o), .dir(tb2_sign)
 );
-wire [3:0] tb_sign = {tb2_sign, tb1_sign};   // [0] P1 X, [1] P1 Y, [2] P2 X, [3] P2 Y
+wire [3:0] tb_sign = {tb2_sign, tb1_sign};
 
 /* verilator lint_off UNUSED */
 wire [35:0] ids;
@@ -358,16 +328,15 @@ ctl_ids #(.BTN56(0)) u_ids(.joy0(joystick_0), .joy1(joystick_1), .kb(kb), .dir1(
 wire [63:0] ctl =
 {
 	36'd0,
-	joystick_3[9] | joystick_3[10],                 // 27 start 4
-	joystick_2[9] | joystick_2[10],                 // 26 start 3
-	joystick_3[4],                                  // 25 P4 Btn 1
-	joystick_2[4],                                  // 24 P3 Btn 1
-	ids[23:6],                                      // 23-6 (coin 3 ... P1 Btn 2)
-	ids[5] | ps2_mouse[0] | snac_fire,              // 5 P1 Btn 1 (+ mouse left, SNAC fire)
-	ids[4:0]                                        // 4-1 P1 R L D U, 0 none
+	joystick_3[9] | joystick_3[10],
+	joystick_2[9] | joystick_2[10],
+	joystick_3[4],
+	joystick_2[4],
+	ids[23:6],
+	ids[5] | ps2_mouse[0] | snac_fire,
+	ids[4:0]
 };
 
-// DIP switches arrive from the OSD via ioctl index 254 (3 bytes of packed DIP fields)
 reg [7:0] dip_sw[8] = '{8'hFF,8'hFF,8'hFF,8'hFF,8'h00,8'h00,8'h00,8'h00};
 always @(posedge CLK_48M) begin
 	if (ioctl_wr && (ioctl_index == 8'd254) && !ioctl_addr[24:3])
@@ -408,8 +377,6 @@ ctl_paddle #(.PAUSE_MODE(1)) u_pad4(.clk(CLK_48M), .reset(reset), .pause(pause_c
 	.reverse(status[45]), .paddle(paddle_3), .spinner(spinner_3), .mouse_ev(1'b0), .mouse_dx(10'd0),
 	.stick_x(joystick_l_analog_3[7:0]), .left(joystick_3[1]), .right(joystick_3[0]), .pos(pad_pos[3]));
 
-// Maze Invaders analog sticks (STICK0-3, 40-BF, centre 7F): P1 Y reversed, P2 Y, P1 X, P2 X reversed.
-// Left stick, or the D-pad at full deflection.
 function automatic [7:0] stick_val(input [7:0] a, input pos, input neg);
 	reg [8:0] v;
 	begin
@@ -429,7 +396,6 @@ wire [7:0] an1 = stk_game ? stk_p2y         : pad_pos[1];
 wire [7:0] an2 = stk_game ? stk_p1x         : pad_pos[2];
 wire [7:0] an3 = stk_game ? 8'hFF - stk_p2x : pad_pos[3];
 
-// save system nets (instances after the boards)
 wire        nv_dl = ioctl_download && ioctl_index == 8'd4;
 wire  [7:0] nv_address, c_nv_q, k_nv_q;
 wire  [7:0] nv_din_hps, hs_din_hps;
@@ -442,7 +408,6 @@ wire  [7:0] hs_data_in;
 wire  [7:0] hs_data_out;
 wire        hs_write_enable;
 
-// PAUSE SYSTEM
 wire [23:0] rgb_out;
 wire  [7:0] r, g, b;
 pause #(8,8,8,48) pause
@@ -454,8 +419,6 @@ pause #(8,8,8,48) pause
 	.options(~status[18:17])
 );
 
-///////////////                 Video                  ////////////////
-
 wire hs, vs;
 wire ce_pix;
 wire        c_ce, c_hs, c_vs, c_hbl, c_vbl, k_ce, k_hs, k_vs, k_hbl, k_vbl;
@@ -465,8 +428,6 @@ wire        bd_hs, bd_vs, bd_hbl, bd_vbl;
 assign {ce_pix, bd_hs, bd_vs, bd_hbl, bd_vbl} = v_cc ? {k_ce, k_hs, k_vs, k_hbl, k_vbl} : {c_ce, c_hs, c_vs, c_hbl, c_vbl};
 wire [23:0] bd_rgb = v_cc ? {k_r, k_g, k_b} : {c_r, c_g, c_b};
 
-// MAME artwork (ioctl index 5, OSD Artwork page): native composite on the core video (one pixel late),
-// full view through the DDR3 framebuffer on HDMI
 wire        art_run, art_ddr;
 wire [31:0] art_fb_base;
 wire  [7:0] art_burstcnt, art_be;
@@ -490,11 +451,10 @@ artwork #(.IDX(8'd5)) artwork
 	.DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(art_rd),
 	.DDRAM_DIN(art_din), .DDRAM_BE(art_be), .DDRAM_WE(art_we)
 );
-// Orientation Horz (rotated monitor): the artwork turns its own view, so it keeps the framebuffer
 assign art_fb = art_run & ~direct_video;
 assign audio = v_cc ? k_audio : c_audio;
 
-wire rotate_ccw = ~game_flags[7];  // ROT270 sets rotate CCW, ROT90 sets CW
+wire rotate_ccw = ~game_flags[7];
 wire no_rotate  = ~game_vert | status[8] | direct_video;
 wire flip       = status[9];
 wire        sr_fb_en, sr_clk, sr_rd, sr_we;
@@ -514,7 +474,6 @@ screen_rotate screen_rotate
 	.DDRAM_BE(sr_be), .DDRAM_WE(sr_we), .DDRAM_RD(sr_rd)
 );
 
-// the artwork takes the framebuffer while it draws, and DDR3 while it loads or draws
 assign FB_EN     = art_fb | sr_fb_en;
 assign FB_FORMAT = art_fb ? 5'b00110  : sr_fb_format;
 assign FB_WIDTH  = art_fb ? art_cw    : sr_fb_w;
@@ -544,8 +503,6 @@ arcade_video #(256,24) arcade_video
 	.fx(status[23:21])
 );
 
-///////////////                 Board                  ////////////////
-
 centipede_dispatcher boards
 (
 	.clk(CLK_48M), .reset(reset), .v_cc(v_cc), .pause(pause_cpu), .variant(game_var),
@@ -559,10 +516,6 @@ centipede_dispatcher boards
 	.nv_sel(nv_sel), .nv_addr(nv_port_addr), .nv_din(ioctl_dout), .nv_we(nv_port_we), .c_nv_dout(c_nv_q), .k_nv_dout(k_nv_q),
 	.hs_addr(hs_address[9:0]), .hs_din(hs_data_in), .hs_we(hs_write_enable & save_mode == 2'd1), .hs_dout(hs_data_out)
 );
-
-// Saves. Chip boards: the NVRAM file is the save chip's contents, written into the chip while the MRA loads (the
-// board is in reset) and read back by nvram.v; the game restores its own scores as on the real board.
-// Magic Worm / Warlords: hiscore.dat ranges in work RAM through hiscore.v. Each is inert outside its mode.
 
 nvram #(
 	.DUMPWIDTH(8),

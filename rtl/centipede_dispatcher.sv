@@ -17,7 +17,7 @@ module centipede_dispatcher
 (
     input               clk,
     input               reset,
-    input               v_cc,           // Crystal Castles board (variants 10 / 11)
+    input               v_cc,
     input               pause,
     input         [7:0] variant,
 
@@ -56,7 +56,6 @@ module centipede_dispatcher
 );
 
 /////////////////////////////  Shared ROM blocks  /////////////////////////////
-// port A = the index-0 download, port B = the active board's read
 
 wire [15:0] c_prog_a, k_prog_a;
 wire [12:0] c_gfx_a, k_gfx_a;
@@ -78,25 +77,23 @@ dpram_dc #(.widthad_a(13)) rom_gfx_hi
     .clock_a(clk), .address_a(ioctl_addr[12:0]), .data_a(ioctl_dout), .wren_a(ioctl_wr0 && ioctl_addr[24:13] == 12'h009), .q_a(),
     .clock_b(clk), .address_b(v_cc ? k_gfx_a : c_gfx_a), .data_b(8'd0), .wren_b(1'b0), .q_b(gfx_hi_q)
 );
-dpram_dc #(.widthad_a(8)) rom_sync           // sync PROM, 0x14000
+dpram_dc #(.widthad_a(8)) rom_sync
 (
     .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout), .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00140), .q_a(),
     .clock_b(clk), .address_b(v_cc ? k_sync_a : c_sync_a), .data_b(8'd0), .wren_b(1'b0), .q_b(sync_q)
 );
-dpram_dc #(.widthad_a(8)) rom_p1             // colour PROM / write-protect PROM, 0x14100
+dpram_dc #(.widthad_a(8)) rom_p1
 (
     .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout), .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00141), .q_a(),
     .clock_b(clk), .address_b(v_cc ? k_p1_a : c_p1_a), .data_b(8'd0), .wren_b(1'b0), .q_b(p1_q)
 );
-dpram_dc #(.widthad_a(8)) rom_p2             // priority PROM (Crystal Castles), 0x14200
+dpram_dc #(.widthad_a(8)) rom_p2
 (
     .clock_a(clk), .address_a(ioctl_addr[7:0]), .data_a(ioctl_dout), .wren_a(ioctl_wr0 && ioctl_addr[24:8] == 17'h00142), .q_a(),
     .clock_b(clk), .address_b(k_p2_a), .data_b(8'd0), .wren_b(1'b0), .q_b(p2_q)
 );
 
 /////////////////////////////  Chip pool  /////////////////////////////
-// t65_0 = main 6502 (both boards); pokey_0 = Centipede POKEY 1 (POT_CMP 0F), pokey_1 = Centipede POKEY 2 | Crystal
-// Castles POKEY 1, pokey_2 = Crystal Castles POKEY 2; s2650_0, ay_0, sn_0, eeprom_0 = Centipede board only
 
 chip_pool_pkg::t65_i_t          c_t65_i, k_t65_i, t65_0_i;
 chip_pool_pkg::t65_o_t          t65_0_o;
@@ -119,10 +116,10 @@ assign pokey_i[2] = k_pokey_i[1];
 
 wire [23:0] t65_a;
 assign t65_0_o.a = t65_a[15:0];
-T65 t65_0
+t65sv_T65 t65_0
 (
     .Mode(2'b00), .Res_n(t65_0_i.res_n), .Enable(t65_0_i.enable), .Clk(clk), .Rdy(t65_0_i.rdy), .Abort_n(1'b1),
-    .IRQ_n(t65_0_i.irq_n), .NMI_n(t65_0_i.nmi_n), .SO_n(1'b1), .R_W_n(t65_0_o.rw), .A(t65_a), .DI(t65_0_i.di),
+    .IRQ_n(t65_0_i.irq_n), .NMI_n(t65_0_i.nmi_n), .SO_n(1'b1), .R_W_n(t65_0_o.rw), .Sync(t65_0_o.sync), .A(t65_a), .DI(t65_0_i.di),
     .DO(t65_0_o.dout)
 );
 
@@ -145,7 +142,7 @@ generate
     end
 endgenerate
 
-s2650_cpu s2650_0
+s2650sv_s2650_cpu s2650_0
 (
     .clk(clk), .reset(s2650_0_i.reset), .req(s2650_0_o.req), .ack(s2650_0_i.ack), .ad(s2650_0_o.ad), .wr(s2650_0_o.wr),
     .dw(s2650_0_o.dw), .dr(s2650_0_i.dr), .mio(s2650_0_o.mio), .ene(s2650_0_o.ene), .dc(s2650_0_o.dc), .ph(s2650_0_o.ph),
@@ -174,7 +171,6 @@ eeprom_93c46 eeprom_0
 );
 
 /////////////////////////////  Board RAM pool  /////////////////////////////
-// block      Centipede board              Crystal Castles board
 //   0  16K   work RAM 1K (port B hiscore)  bitmap even
 //   1  16K   playfield 1K                  bitmap odd
 //   2   4K   line buffer 256               sprite RAM
@@ -183,9 +179,11 @@ eeprom_93c46 eeprom_0
 //   5  256   -                             NVRAM shadow
 
 ram_pool_pkg::pram_i_t [3:0] c_pr_i;
-ram_pool_pkg::pram_i_t [5:0] k_pr_i, pool_i;
+ram_pool_pkg::pram_i_t [5:0] c_pr_x, k_pr_i, pool_i;
 ram_pool_pkg::pram_o_t [5:0] pool_o;
-assign pool_i = v_cc ? k_pr_i : {96'd0, c_pr_i};      // blocks 4-5 idle on the Centipede board (2 x 48-bit pram_i_t)
+assign c_pr_x[3:0] = c_pr_i;
+assign c_pr_x[5:4] = '0;                         // blocks 4-5 idle on the Centipede board
+assign pool_i = v_cc ? k_pr_i : c_pr_x;
 
 dpram_dc #(.widthad_a(14)) ram_0
 (
